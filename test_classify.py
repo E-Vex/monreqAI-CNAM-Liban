@@ -1,6 +1,6 @@
 """
 Quick test for the classification function using real samples from the feed.
-Requires the AI_API_KEY environment variable to be set.
+Requires the AI_API_KEYS (or AI_API_KEY) environment variable to be set.
 """
 
 import monitor

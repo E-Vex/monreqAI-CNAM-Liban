@@ -122,20 +122,62 @@ def print_announcement(info: dict, index: int = None) -> None:
 
 
 # --- AI Classification --------------------------------------------------------
-AI_API_KEY = os.environ.get("AI_API_KEY")        # Gemini API key (added later as env var)
-AI_MODEL   = "gemini-3.6-flash"                   # fast, free-tier model, enough for simple classification
+def _load_api_keys() -> list:
+    """
+    Load one or more Gemini API keys.
+
+    Preferred: AI_API_KEYS="key1,key2,key3" (comma-separated).
+    Still supported for backward compatibility: a single AI_API_KEY.
+    """
+    raw = os.environ.get("AI_API_KEYS") or os.environ.get("AI_API_KEY") or ""
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+AI_API_KEYS = _load_api_keys()
+AI_MODEL    = "gemini-3.6-flash"   # fast, free-tier model, enough for simple classification
 
 CATEGORY_GENERAL = "general"   # relevant to all students
 CATEGORY_CS      = "cs"        # relevant to Computer Science / Informatique students
 CATEGORY_OTHER   = "other"     # not relevant to me
 
+# round-robin starting point across calls, so load spreads evenly over keys
+_key_cursor = 0
+
+
+def _call_gemini(prompt: str, api_key: str) -> str:
+    """Make a single classification request to the Gemini API using one key."""
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}]
+    }).encode("utf-8")
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{AI_MODEL}:generateContent?key={api_key}"
+    )
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+
+    with urllib.request.urlopen(req, timeout=20) as response:
+        result = json.loads(response.read())
+
+    return result["candidates"][0]["content"]["parts"][0]["text"].strip().lower()
+
 
 def classify_announcement(info: dict) -> str:
     """
-    Ask the AI model to classify the announcement into: general / cs / other
+    Ask the AI model to classify the announcement into: general / cs / other.
+
+    Rotates across AI_API_KEYS: if a key returns 429 (quota exceeded),
+    the next key is tried instead of failing the whole classification.
     """
-    if not AI_API_KEY:
-        raise RuntimeError("AI_API_KEY environment variable is not set.")
+    global _key_cursor
+
+    if not AI_API_KEYS:
+        raise RuntimeError("AI_API_KEYS / AI_API_KEY environment variable is not set.")
 
     prompt = f"""You classify university announcements for an engineering institute.
 
@@ -149,35 +191,35 @@ Classify this announcement into exactly one category:
 
 Reply with exactly one word: general or cs or other"""
 
-    body = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}]
-    }).encode("utf-8")
+    key_count  = len(AI_API_KEYS)
+    last_error = None
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{AI_MODEL}:generateContent?key={AI_API_KEY}"
+    for attempt in range(key_count):
+        key_index = (_key_cursor + attempt) % key_count
+        api_key   = AI_API_KEYS[key_index]
+
+        try:
+            answer = _call_gemini(prompt, api_key)
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8")
+            if e.code == 429:
+                last_error = f"key #{key_index + 1}/{key_count}: quota exceeded (429)"
+                continue  # this key is exhausted, try the next one
+            raise RuntimeError(f"API request failed ({e.code}): {error_body}")
+
+        # this key worked - start from the next one next time, spreads load evenly
+        _key_cursor = (key_index + 1) % key_count
+
+        if "cs" in answer:
+            return CATEGORY_CS
+        if "general" in answer:
+            return CATEGORY_GENERAL
+        return CATEGORY_OTHER
+
+    raise RuntimeError(
+        f"All {key_count} API key(s) exhausted their quota. Last error: {last_error}"
     )
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=20) as response:
-            result = json.loads(response.read())
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8")
-        raise RuntimeError(f"API request failed ({e.code}): {error_body}")
-
-    answer = result["candidates"][0]["content"]["parts"][0]["text"].strip().lower()
-
-    if "cs" in answer:
-        return CATEGORY_CS
-    if "general" in answer:
-        return CATEGORY_GENERAL
-    return CATEGORY_OTHER
 
 
 # --- Telegram Notifications ---------------------------------------------------
