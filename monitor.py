@@ -33,6 +33,21 @@ def save_seen(seen_ids: list) -> None:
         json.dump(seen_ids, f, ensure_ascii=False, indent=2)
 
 
+def mark_seen(announcement_id: str) -> None:
+    """
+    Mark a single announcement as seen and persist immediately.
+
+    Called only after an announcement has been fully classified. This way,
+    if classification fails partway through a batch, the unprocessed
+    announcements are NOT marked as seen and will be picked up again on
+    the next run instead of being silently dropped forever.
+    """
+    seen_ids = load_seen()
+    if announcement_id not in seen_ids:
+        seen_ids.append(announcement_id)
+        save_seen(seen_ids)
+
+
 def fetch_feed() -> list:
     """
     Fetch announcements from the Atom Feed.
@@ -86,7 +101,11 @@ def check_new_announcements() -> list:
     Core logic:
     1. Fetch the feed
     2. Compare against saved IDs
-    3. Return only new announcements and update the seen file
+    3. Return only the new announcements
+
+    Note: this no longer marks announcements as seen. That now happens
+    per-item, via mark_seen(), only after each one is successfully
+    classified - see the __main__ block below.
     """
     seen_ids = load_seen()
     entries  = fetch_feed()
@@ -98,11 +117,6 @@ def check_new_announcements() -> list:
 
         if info["id"] not in seen_ids:
             new_announcements.append(info)
-            seen_ids.append(info["id"])
-
-    # Save first, before any further processing - avoids re-sending on later errors
-    if new_announcements:
-        save_seen(seen_ids)
 
     return new_announcements
 
@@ -290,6 +304,10 @@ if __name__ == "__main__":
             for i, item in enumerate(new_items, start=1):
                 try:
                     category = classify_announcement(item)
+                    # Only mark as seen once classification succeeds - a
+                    # failure here means this announcement gets retried on
+                    # the next run instead of being silently dropped.
+                    mark_seen(item["id"])
                 except RuntimeError as e:
                     category = f"(classification unavailable: {e})"
 
