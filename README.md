@@ -17,7 +17,7 @@ On each run, the tool:
    - `general` – relevant to all students
    - `cs` – relevant to Computer Science students specifically
    - `other` – relevant to a different department or not academic
-3. Sends a Telegram notification for `general` and `cs` announcements, with the title and link.(THIS IS NOT CURRENTLY SUPPORTED)
+3. Sends a Telegram notification for `general` and `cs` announcements, with the title and link.
 
 ## Requirements
 

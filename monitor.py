@@ -180,6 +180,61 @@ Reply with exactly one word: general or cs or other"""
     return CATEGORY_OTHER
 
 
+# --- Telegram Notifications ---------------------------------------------------
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
+
+# categories that are worth notifying about
+NOTIFY_CATEGORIES = (CATEGORY_GENERAL, CATEGORY_CS)
+
+
+def format_telegram_message(info: dict, category: str) -> str:
+    """Build the plain-text Telegram message for one announcement."""
+    label = "General" if category == CATEGORY_GENERAL else "CS"
+    lines = [
+        f"[{label}] {info['title']}",
+        f"Date: {info['published']}",
+    ]
+    if info["summary"]:
+        lines.append(info["summary"][:200])
+    lines.append(info["link"])
+    return "\n".join(lines)
+
+
+def send_telegram_message(text: str) -> None:
+    """
+    Send a plain-text message to the configured Telegram chat
+    using the Bot API sendMessage endpoint.
+    """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID environment variables are not set."
+        )
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    body = json.dumps({
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            result = json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8")
+        raise RuntimeError(f"Telegram request failed ({e.code}): {error_body}")
+
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegram API returned an error: {result}")
+
+
 # --- Entry point -------------------------------------------------------------
 if __name__ == "__main__":
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -195,8 +250,16 @@ if __name__ == "__main__":
                     category = classify_announcement(item)
                 except RuntimeError as e:
                     category = f"(classification unavailable: {e})"
+
                 print_announcement(item, index=i)
                 print(f"Category:  {category}")
+
+                if category in NOTIFY_CATEGORIES:
+                    try:
+                        send_telegram_message(format_telegram_message(item, category))
+                        print("Telegram:  sent")
+                    except RuntimeError as e:
+                        print(f"Telegram:  failed ({e})")
         else:
             print("No new announcements since last check.\n")
 
