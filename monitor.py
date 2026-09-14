@@ -1,6 +1,7 @@
 """
 ISAE Announcements Monitor
 Step 1: Read the Atom Feed and detect new announcements
+Step 2: Classify announcements using the Gemini AI API
 """
 
 import feedparser
@@ -9,6 +10,7 @@ import json
 import os
 import re
 import urllib.request
+import urllib.error
 from datetime import datetime
 
 # --- Settings ----------------------------------------------------------------
@@ -119,6 +121,65 @@ def print_announcement(info: dict, index: int = None) -> None:
     print("-" * 55)
 
 
+# --- AI Classification --------------------------------------------------------
+AI_API_KEY = os.environ.get("AI_API_KEY")        # Gemini API key (added later as env var)
+AI_MODEL   = "gemini-3.6-flash"                   # fast, free-tier model, enough for simple classification
+
+CATEGORY_GENERAL = "general"   # relevant to all students
+CATEGORY_CS      = "cs"        # relevant to Computer Science / Informatique students
+CATEGORY_OTHER   = "other"     # not relevant to me
+
+
+def classify_announcement(info: dict) -> str:
+    """
+    Ask the AI model to classify the announcement into: general / cs / other
+    """
+    if not AI_API_KEY:
+        raise RuntimeError("AI_API_KEY environment variable is not set.")
+
+    prompt = f"""You classify university announcements for an engineering institute.
+
+Title: {info['title']}
+Summary: {info['summary']}
+
+Classify this announcement into exactly one category:
+- general: relevant to all students in general (deadlines, holidays, registration, general exams...)
+- cs: specifically relevant to Computer Science / Informatique students
+- other: relevant to another department (civil, electrical...) or unrelated to studies (generic job offers, etc.)
+
+Reply with exactly one word: general or cs or other"""
+
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}]
+    }).encode("utf-8")
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{AI_MODEL}:generateContent?key={AI_API_KEY}"
+    )
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            result = json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8")
+        raise RuntimeError(f"API request failed ({e.code}): {error_body}")
+
+    answer = result["candidates"][0]["content"]["parts"][0]["text"].strip().lower()
+
+    if "cs" in answer:
+        return CATEGORY_CS
+    if "general" in answer:
+        return CATEGORY_GENERAL
+    return CATEGORY_OTHER
+
+
 # --- Entry point -------------------------------------------------------------
 if __name__ == "__main__":
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -130,7 +191,12 @@ if __name__ == "__main__":
         if new_items:
             print(f"\nFound {len(new_items)} new announcement(s):\n")
             for i, item in enumerate(new_items, start=1):
+                try:
+                    category = classify_announcement(item)
+                except RuntimeError as e:
+                    category = f"(classification unavailable: {e})"
                 print_announcement(item, index=i)
+                print(f"Category:  {category}")
         else:
             print("No new announcements since last check.\n")
 
