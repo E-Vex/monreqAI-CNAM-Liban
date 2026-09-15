@@ -167,75 +167,118 @@ def print_announcement(info: dict, index: int = None) -> None:
     print("-" * 55)
 
 
-# --- AI Classification --------------------------------------------------------
-def _load_api_keys() -> list:
+# --- AI Classification & Smart Key Pooling -----------------------------------
+import time
+from typing import List, Optional, Dict, Any
+
+CATEGORY_GENERAL = "general"
+CATEGORY_CS      = "cs"
+CATEGORY_OTHER   = "other"
+
+class APIKeyManager:
     """
-    Load one or more Gemini API keys.
-
-    Preferred: AI_API_KEYS="key1,key2,key3" (comma-separated).
-    Still supported for backward compatibility: a single AI_API_KEY.
+    manages API keys with round-robin, failure tracking, and cooldowns.
+    Designed to be instantiated per run. If run via cron, cooldowns reset,
+    but the priority sorting ensures consistently failing keys are tried last,
+    minimizing latency before falling back to Groq.
     """
-    raw = os.environ.get("AI_API_KEYS") or os.environ.get("AI_API_KEY") or ""
-    return [k.strip() for k in raw.split(",") if k.strip()]
+    def __init__(self):
+        self.gemini_keys = [k.strip() for k in os.environ.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
+        self.groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+        self.groq_model = os.environ.get("GROQ_MODEL", "llama3-8b-8192")
+        
+        # Track state: { "key_string": {"failures": int, "cooldown_until": float} }
+        self.state: Dict[str, Dict[str, Any]] = {}
+        for key in self.gemini_keys + ([self.groq_key] if self.groq_key else []):
+            self.state[key] = {"failures": 0, "cooldown_until": 0.0}
+
+    def get_available_keys(self, provider: str) -> List[str]:
+        """Returns available keys sorted by lowest failure count (best first)."""
+        keys = self.gemini_keys if provider == "gemini" else ([self.groq_key] if self.groq_key else [])
+        now = time.time()
+        
+        available = [
+            k for k in keys 
+            if self.state[k]["cooldown_until"] < now
+        ]
+        # Sort by failures ascending (healthiest keys first)
+        available.sort(key=lambda k: self.state[k]["failures"])
+        return available
+
+    def record_success(self, key: str):
+        if key in self.state:
+            self.state[key]["failures"] = 0
+            self.state[key]["cooldown_until"] = 0.0
+
+    def record_failure(self, key: str, error_code: int):
+        if key not in self.state:
+            return
+        self.state[key]["failures"] += 1
+        # Cool down for 15 minutes on quota/server errors to save time in current run
+        if error_code in [429, 500, 502, 503, 504]:
+            self.state[key]["cooldown_until"] = time.time() + 900
 
 
-AI_API_KEYS = _load_api_keys()
-AI_MODEL    = "gemini-3.6-flash"   # fast, free-tier model, enough for simple classification
-
-CATEGORY_GENERAL = "general"   # relevant to all students
-CATEGORY_CS      = "cs"        # relevant to Computer Science / Informatique students
-CATEGORY_OTHER   = "other"     # not relevant to me
-
-# round-robin starting point across calls, so load spreads evenly over keys
-_key_cursor = 0
-
+# Initialize manager globally for this run
+key_manager = APIKeyManager()
 
 def _call_gemini(prompt: str, api_key: str) -> str:
-    """Make a single classification request to the Gemini API using one key."""
+    """Make a classification request to Gemini API."""
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}]
     }).encode("utf-8")
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{AI_MODEL}:generateContent?key={api_key}"
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
 
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=20) as response:
-            result = json.loads(response.read())
-    except urllib.error.HTTPError:
-        # HTTP-level errors (4xx/5xx) propagate as-is so classify_announcement
-        # can inspect the code and retry on 429 (quota exceeded).
-        raise
-    except urllib.error.URLError as e:
-        # Network-level errors (DNS failure, connection refused, timeout, ...).
-        # Note: HTTPError is a subclass of URLError, but the clause above
-        # catches it first and re-raises, so we only reach this branch for
-        # true network errors. Wrap as RuntimeError so the main loop's
-        # `except RuntimeError` handles it instead of crashing the script.
-        raise RuntimeError(f"Gemini API network error: {e}")
-
+    with urllib.request.urlopen(req, timeout=15) as response:
+        result = json.loads(response.read())
+    
     return result["candidates"][0]["content"]["parts"][0]["text"].strip().lower()
 
+def _call_groq(prompt: str, api_key: str) -> str:
+    """Make a classification request to Groq API (OpenAI compatible)."""
+    body = json.dumps({
+        "model": key_manager.groq_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "max_tokens": 10
+    }).encode("utf-8")
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    req = urllib.request.Request(
+        url, 
+        data=body, 
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+    )
+
+    with urllib.request.urlopen(req, timeout=15) as response:
+        result = json.loads(response.read())
+    
+    return result["choices"][0]["message"]["content"].strip().lower()
+
+def _parse_ai_response(answer: str) -> str:
+    """Safely extract the category from the AI's text response."""
+    answer = answer.lower()
+    if "cs" in answer or "computer" in answer or "informatique" in answer:
+        return CATEGORY_CS
+    if "general" in answer:
+        return CATEGORY_GENERAL
+    return CATEGORY_OTHER
 
 def classify_announcement(info: dict) -> str:
     """
-    Ask the AI model to classify the announcement into: general / cs / other.
-
-    Rotates across AI_API_KEYS: if a key returns 429 (quota exceeded),
-    the next key is tried instead of failing the whole classification.
+    Classifies the announcement using a resilient multi-provider strategy:
+    1. Tries available Gemini keys (sorted by health).
+    2. If all Gemini keys fail (e.g., all hit 429), falls back to Groq.
+    3. Raises RuntimeError only if ALL providers are exhausted, allowing 
+       the main loop to mark it as pending for the next run.
     """
-    global _key_cursor
-
-    if not AI_API_KEYS:
-        raise RuntimeError("AI_API_KEYS / AI_API_KEY environment variable is not set.")
+    if not key_manager.gemini_keys and not key_manager.groq_key:
+        raise RuntimeError("No AI API keys configured (GEMINI_API_KEYS or GROQ_API_KEY).")
 
     prompt = f"""You classify university announcements for an engineering institute.
 
@@ -243,40 +286,46 @@ Title: {info['title']}
 Summary: {info['summary']}
 
 Classify this announcement into exactly one category:
-- general: relevant to all students in general (deadlines, holidays, registration, general exams...)
+- general: relevant to all students (deadlines, holidays, registration, general exams...)
 - cs: specifically relevant to Computer Science / Informatique students
-- other: relevant to another department (civil, electrical...) or unrelated to studies (generic job offers, etc.)
+- other: relevant to another department or unrelated to studies.
 
 Reply with exactly one word: general or cs or other"""
 
-    key_count  = len(AI_API_KEYS)
     last_error = None
 
-    for attempt in range(key_count):
-        key_index = (_key_cursor + attempt) % key_count
-        api_key   = AI_API_KEYS[key_index]
-
+    # --- Phase 1: Try Gemini Keys ---
+    for key in key_manager.get_available_keys("gemini"):
         try:
-            answer = _call_gemini(prompt, api_key)
+            answer = _call_gemini(prompt, key)
+            key_manager.record_success(key)
+            return _parse_ai_response(answer)
         except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8")
-            if e.code == 429:
-                last_error = f"key #{key_index + 1}/{key_count}: quota exceeded (429)"
-                continue  # this key is exhausted, try the next one
-            raise RuntimeError(f"API request failed ({e.code}): {error_body}")
+            key_manager.record_failure(key, e.code)
+            last_error = f"Gemini key failed ({e.code})"
+            continue # Move to next Gemini key
+        except urllib.error.URLError as e:
+            key_manager.record_failure(key, 500)
+            last_error = f"Gemini network error: {e}"
+            continue
 
-        # this key worked - start from the next one next time, spreads load evenly
-        _key_cursor = (key_index + 1) % key_count
+    # --- Phase 2: Fallback to Groq ---
+    groq_keys = key_manager.get_available_keys("groq")
+    if groq_keys:
+        groq_key = groq_keys[0]
+        try:
+            answer = _call_groq(prompt, groq_key)
+            key_manager.record_success(groq_key)
+            return _parse_ai_response(answer)
+        except urllib.error.HTTPError as e:
+            key_manager.record_failure(groq_key, e.code)
+            last_error = f"Groq fallback failed ({e.code})"
+        except urllib.error.URLError as e:
+            key_manager.record_failure(groq_key, 500)
+            last_error = f"Groq network error: {e}"
 
-        if "cs" in answer:
-            return CATEGORY_CS
-        if "general" in answer:
-            return CATEGORY_GENERAL
-        return CATEGORY_OTHER
-
-    raise RuntimeError(
-        f"All {key_count} API key(s) exhausted their quota. Last error: {last_error}"
-    )
+    # --- Phase 3: Total Failure ---
+    raise RuntimeError(f"All AI providers exhausted. Last error: {last_error}")
 
 
 
