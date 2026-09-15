@@ -45,20 +45,20 @@ class FakeEntry:
 
 
 def simulate_check(entries, seen_file: str) -> list:
-    """Run check_new_announcements logic on fake entries."""
+    """
+    Run the real check_new_announcements() against fake entries, then mark
+    whatever it finds as fully processed - same as monitor.py would after a
+    successful general-channel send + classification.
+    """
     monitor.SEEN_FILE = seen_file
-    seen_ids = monitor.load_seen()
-    new_items = []
+    monitor.fetch_feed = lambda: entries  # skip the real network call
 
-    for entry in entries:
-        info = monitor.extract_entry_info(entry)
-        if info["id"] not in seen_ids:
-            new_items.append(info)
-            seen_ids.append(info["id"])
-            monitor.print_announcement(info)
+    new_items = monitor.check_new_announcements()
 
-    if new_items:
-        monitor.save_seen(seen_ids)
+    for info in new_items:
+        monitor.print_announcement(info)
+        monitor.mark_general_sent(info["id"])
+        monitor.mark_classified(info["id"])
 
     return new_items
 

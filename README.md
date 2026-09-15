@@ -36,11 +36,12 @@ flowchart LR
 On each run:
 
 1. Fetch the feed and diff it against a local record of already-seen announcements (`seen.json`).
-2. For every new entry, ask an AI model to classify it as:
+2. Post it, unconditionally, to a **general Telegram channel** — every new announcement lands there regardless of category.
+3. Ask an AI model to classify it as:
    - `general` — relevant to all students
    - `cs` — relevant to Computer Science students specifically
    - `other` — a different department, or not academic
-3. Send a Telegram notification for `general` and `cs` posts, with the title and link. **Telegram delivery is not wired up yet** — see [Status](#status).
+4. If it's `cs` (or another department that later gets its own channel), also post it to that **department-specific channel**.
 
 ## Features
 
@@ -65,14 +66,18 @@ Set as environment variables — never hardcode these:
 ```bash
 export AI_API_KEY="your_key"
 export TELEGRAM_BOT_TOKEN="your_bot_token"
-export TELEGRAM_CHAT_ID="your_chat_id"
+export TELEGRAM_CHANNEL_GENERAL="general_channel_chat_id"
+export TELEGRAM_CHANNEL_CS="cs_channel_chat_id"
 ```
 
 | Variable | Used for |
 |---|---|
 | `AI_API_KEY` | API key for the AI classification model |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot used to send notifications |
-| `TELEGRAM_CHAT_ID` | Chat/user ID that receives them |
+| `TELEGRAM_CHANNEL_GENERAL` | Channel that gets every new announcement |
+| `TELEGRAM_CHANNEL_CS` | Channel that gets only CS-classified announcements |
+
+A department channel is optional: if its env var isn't set, that department's posts still reach the general channel, they just skip the dedicated one. To add another department's channel later, add an env var for it and one line in `DEPARTMENT_CHANNELS` in `monitor.py`.
 
 ## Running
 
@@ -98,8 +103,8 @@ Work in progress, currently built for a single recipient.
 
 - [x] Feed polling and diffing against `seen.json`
 - [x] AI-based relevance classification
-- [ ] Telegram delivery (classification works, sending doesn't yet)
-- [ ] Multi-department support
+- [x] Telegram delivery: general channel (all posts) + per-department channel (currently just CS)
+- [ ] More department channels (civil, electrical, ...) — needs the classifier's categories expanded first
 - [ ] Multi-subscriber support
 
 ## Contributing

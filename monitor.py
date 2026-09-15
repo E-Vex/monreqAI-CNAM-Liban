@@ -19,33 +19,57 @@ SEEN_FILE = "seen.json"   # stores IDs of already-processed announcements
 # -----------------------------------------------------------------------------
 
 
-def load_seen() -> list:
-    """Load the list of already-seen announcement IDs."""
-    if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+def load_seen() -> dict:
+    """
+    Load the sets of already-processed announcement IDs.
+
+    Two independent sets, because the two notification paths no longer
+    succeed or fail together:
+      - "general_sent": already broadcast to the general channel. This can
+        happen immediately, with no classification needed.
+      - "classified":   already classified (and, if applicable, routed to
+        its department channel). Only added once classification actually
+        succeeds, so a classification failure gets retried on the next
+        run instead of being silently dropped forever.
+
+    Transparently upgrades the old plain-list format (from before general/
+    department channels existed) by treating every id already in it as
+    done for both.
+    """
+    if not os.path.exists(SEEN_FILE):
+        return {"general_sent": [], "classified": []}
+
+    with open(SEEN_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if isinstance(data, list):
+        return {"general_sent": list(data), "classified": list(data)}
+
+    data.setdefault("general_sent", [])
+    data.setdefault("classified", [])
+    return data
 
 
-def save_seen(seen_ids: list) -> None:
-    """Save the list of seen announcement IDs."""
+def save_seen(seen: dict) -> None:
+    """Save the sets of seen announcement IDs."""
     with open(SEEN_FILE, "w", encoding="utf-8") as f:
-        json.dump(seen_ids, f, ensure_ascii=False, indent=2)
+        json.dump(seen, f, ensure_ascii=False, indent=2)
 
 
-def mark_seen(announcement_id: str) -> None:
-    """
-    Mark a single announcement as seen and persist immediately.
+def mark_general_sent(announcement_id: str) -> None:
+    """Record that an announcement has been broadcast to the general channel."""
+    seen = load_seen()
+    if announcement_id not in seen["general_sent"]:
+        seen["general_sent"].append(announcement_id)
+        save_seen(seen)
 
-    Called only after an announcement has been fully classified. This way,
-    if classification fails partway through a batch, the unprocessed
-    announcements are NOT marked as seen and will be picked up again on
-    the next run instead of being silently dropped forever.
-    """
-    seen_ids = load_seen()
-    if announcement_id not in seen_ids:
-        seen_ids.append(announcement_id)
-        save_seen(seen_ids)
+
+def mark_classified(announcement_id: str) -> None:
+    """Record that an announcement has been classified (and routed if applicable)."""
+    seen = load_seen()
+    if announcement_id not in seen["classified"]:
+        seen["classified"].append(announcement_id)
+        save_seen(seen)
 
 
 def fetch_feed() -> list:
@@ -101,21 +125,28 @@ def check_new_announcements() -> list:
     Core logic:
     1. Fetch the feed
     2. Compare against saved IDs
-    3. Return only the new announcements
+    3. Return every announcement still missing at least one of the two
+       notification steps (general broadcast, classification/department
+       routing), tagged with which of the two it's still pending.
 
     Note: this no longer marks announcements as seen. That now happens
-    per-item, via mark_seen(), only after each one is successfully
-    classified - see the __main__ block below.
+    per-item, via mark_general_sent() / mark_classified(), only once each
+    step actually succeeds - see the __main__ block below.
     """
-    seen_ids = load_seen()
-    entries  = fetch_feed()
+    seen    = load_seen()
+    entries = fetch_feed()
 
     new_announcements = []
 
     for entry in entries:
         info = extract_entry_info(entry)
 
-        if info["id"] not in seen_ids:
+        pending_general        = info["id"] not in seen["general_sent"]
+        pending_classification = info["id"] not in seen["classified"]
+
+        if pending_general or pending_classification:
+            info["pending_general"]        = pending_general
+            info["pending_classification"] = pending_classification
             new_announcements.append(info)
 
     return new_announcements
@@ -238,15 +269,41 @@ Reply with exactly one word: general or cs or other"""
 
 # --- Telegram Notifications ---------------------------------------------------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
 
-# categories that are worth notifying about
-NOTIFY_CATEGORIES = (CATEGORY_GENERAL, CATEGORY_CS)
+# The public channel: every new announcement is posted here, unconditionally,
+# regardless of category (including "other" and anything classification
+# couldn't handle).
+GENERAL_CHANNEL_CHAT_ID = os.environ.get("TELEGRAM_CHANNEL_GENERAL")
+
+# One chat id per department channel, keyed by the classifier's category.
+# Add an entry here (plus a matching env var) whenever a new department
+# gets its own channel - "other" stays unmapped until it does.
+DEPARTMENT_CHANNELS = {
+    CATEGORY_CS: os.environ.get("TELEGRAM_CHANNEL_CS"),
+}
+
+# Display label per department, for the message prefix. Falls back to the
+# category name (capitalized) if it's not listed here.
+DEPARTMENT_LABELS = {
+    CATEGORY_CS: "CS",
+}
 
 
-def format_telegram_message(info: dict, category: str) -> str:
-    """Build the plain-text Telegram message for one announcement."""
-    label = "General" if category == CATEGORY_GENERAL else "CS"
+def format_general_message(info: dict) -> str:
+    """Build the plain-text message for the general channel (no category label)."""
+    lines = [
+        info["title"],
+        f"Date: {info['published']}",
+    ]
+    if info["summary"]:
+        lines.append(info["summary"][:200])
+    lines.append(info["link"])
+    return "\n".join(lines)
+
+
+def format_department_message(info: dict, category: str) -> str:
+    """Build the plain-text message for a department channel, prefixed with its label."""
+    label = DEPARTMENT_LABELS.get(category, category.capitalize())
     lines = [
         f"[{label}] {info['title']}",
         f"Date: {info['published']}",
@@ -257,19 +314,19 @@ def format_telegram_message(info: dict, category: str) -> str:
     return "\n".join(lines)
 
 
-def send_telegram_message(text: str) -> None:
+def send_telegram_message(chat_id: str, text: str) -> None:
     """
-    Send a plain-text message to the configured Telegram chat
+    Send a plain-text message to the given Telegram chat/channel
     using the Bot API sendMessage endpoint.
     """
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
         raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID environment variables are not set."
+            "TELEGRAM_BOT_TOKEN is not set, or no chat id was given for this channel."
         )
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     body = json.dumps({
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": chat_id,
         "text": text,
         "disable_web_page_preview": True,
     }).encode("utf-8")
@@ -302,24 +359,44 @@ if __name__ == "__main__":
         if new_items:
             print(f"\nFound {len(new_items)} new announcement(s):\n")
             for i, item in enumerate(new_items, start=1):
-                try:
-                    category = classify_announcement(item)
-                    # Only mark as seen once classification succeeds - a
-                    # failure here means this announcement gets retried on
-                    # the next run instead of being silently dropped.
-                    mark_seen(item["id"])
-                except RuntimeError as e:
-                    category = f"(classification unavailable: {e})"
-
                 print_announcement(item, index=i)
-                print(f"Category:  {category}")
 
-                if category in NOTIFY_CATEGORIES:
+                # 1. General channel: every new announcement goes here,
+                #    unconditionally. Independent of classification, so it
+                #    isn't held up if the AI step below fails.
+                if item["pending_general"]:
                     try:
-                        send_telegram_message(format_telegram_message(item, category))
-                        print("Telegram:  sent")
+                        send_telegram_message(
+                            GENERAL_CHANNEL_CHAT_ID, format_general_message(item)
+                        )
+                        mark_general_sent(item["id"])
+                        print("General channel:  sent")
                     except RuntimeError as e:
-                        print(f"Telegram:  failed ({e})")
+                        print(f"General channel:  failed ({e})")
+
+                # 2. Department channel: only for items the AI can classify.
+                #    Only marked done once classification succeeds - a
+                #    failure here means it gets retried on the next run
+                #    instead of being silently dropped.
+                if item["pending_classification"]:
+                    try:
+                        category = classify_announcement(item)
+                        mark_classified(item["id"])
+                    except RuntimeError as e:
+                        category = None
+                        print(f"Classification:   unavailable ({e})")
+
+                    if category:
+                        print(f"Category:         {category}")
+                        dept_chat_id = DEPARTMENT_CHANNELS.get(category)
+                        if dept_chat_id:
+                            try:
+                                send_telegram_message(
+                                    dept_chat_id, format_department_message(item, category)
+                                )
+                                print(f"{category} channel:  sent")
+                            except RuntimeError as e:
+                                print(f"{category} channel:  failed ({e})")
         else:
             print("No new announcements since last check.\n")
 
