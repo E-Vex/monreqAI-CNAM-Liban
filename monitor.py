@@ -28,9 +28,10 @@ def load_seen() -> dict:
       - "general_sent": already broadcast to the general channel. This can
         happen immediately, with no classification needed.
       - "classified":   already classified (and, if applicable, routed to
-        its department channel). Only added once classification actually
-        succeeds, so a classification failure gets retried on the next
-        run instead of being silently dropped forever.
+        its department channel). Only added once classification succeeds
+        AND (the department-channel send succeeds OR no department channel
+        is configured for that category), so a failure at any step gets
+        retried on the next run instead of being silently dropped forever.
 
     Transparently upgrades the old plain-list format (from before general/
     department channels existed) by treating every id already in it as
@@ -145,8 +146,8 @@ def check_new_announcements() -> list:
         pending_classification = info["id"] not in seen["classified"]
 
         if pending_general or pending_classification:
-            info["pending_general"]        = pending_general
-            info["pending_classification"] = pending_classification
+            info["pending_general"]         = pending_general
+            info["pending_classification"]  = pending_classification
             new_announcements.append(info)
 
     return new_announcements
@@ -206,8 +207,20 @@ def _call_gemini(prompt: str, api_key: str) -> str:
         headers={"Content-Type": "application/json"},
     )
 
-    with urllib.request.urlopen(req, timeout=20) as response:
-        result = json.loads(response.read())
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            result = json.loads(response.read())
+    except urllib.error.HTTPError:
+        # HTTP-level errors (4xx/5xx) propagate as-is so classify_announcement
+        # can inspect the code and retry on 429 (quota exceeded).
+        raise
+    except urllib.error.URLError as e:
+        # Network-level errors (DNS failure, connection refused, timeout, ...).
+        # Note: HTTPError is a subclass of URLError, but the clause above
+        # catches it first and re-raises, so we only reach this branch for
+        # true network errors. Wrap as RuntimeError so the main loop's
+        # `except RuntimeError` handles it instead of crashing the script.
+        raise RuntimeError(f"Gemini API network error: {e}")
 
     return result["candidates"][0]["content"]["parts"][0]["text"].strip().lower()
 
@@ -318,6 +331,12 @@ def send_telegram_message(chat_id: str, text: str) -> None:
     """
     Send a plain-text message to the given Telegram chat/channel
     using the Bot API sendMessage endpoint.
+
+    Both HTTP-level errors (4xx/5xx) and network-level errors (DNS failure,
+    timeout, connection refused) are wrapped as RuntimeError so the main
+    loop can catch them uniformly and decide whether to retry on the next
+    run. HTTPError is a subclass of URLError, so the order of the except
+    clauses matters: HTTPError is matched first.
     """
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         raise RuntimeError(
@@ -343,15 +362,42 @@ def send_telegram_message(chat_id: str, text: str) -> None:
     except urllib.error.HTTPError as e:
         error_body = e.read().decode("utf-8")
         raise RuntimeError(f"Telegram request failed ({e.code}): {error_body}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Telegram network error: {e}")
 
     if not result.get("ok"):
         raise RuntimeError(f"Telegram API returned an error: {result}")
+
+
+# --- Startup sanity checks ---------------------------------------------------
+def _warn_missing_config() -> None:
+    """
+    Print one-time warnings for misconfigurations instead of failing per-item
+    on every single announcement. The script keeps running so items that
+    don't depend on the missing config (e.g. classification without a
+    general channel) still make progress.
+    """
+    missing = []
+    if not TELEGRAM_BOT_TOKEN:
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if not GENERAL_CHANNEL_CHAT_ID:
+        missing.append("TELEGRAM_CHANNEL_GENERAL")
+    if not AI_API_KEYS:
+        missing.append("AI_API_KEYS / AI_API_KEY")
+
+    if missing:
+        print("  Configuration warnings:")
+        for var in missing:
+            print(f"    - {var} is not set (related features will be skipped)")
+        print()
 
 
 # --- Entry point -------------------------------------------------------------
 if __name__ == "__main__":
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"\n[{timestamp}] Checking ISAE announcements...")
+
+    _warn_missing_config()
 
     try:
         new_items = check_new_announcements()
@@ -375,20 +421,22 @@ if __name__ == "__main__":
                         print(f"General channel:  failed ({e})")
 
                 # 2. Department channel: only for items the AI can classify.
-                #    Only marked done once classification succeeds - a
-                #    failure here means it gets retried on the next run
-                #    instead of being silently dropped.
+                #    Only marked done once classification succeeds AND (the
+                #    department send succeeds OR no department channel is
+                #    configured for this category). A failure at any step
+                #    means the whole step is retried on the next run instead
+                #    of being silently dropped forever.
                 if item["pending_classification"]:
+                    category = None
                     try:
                         category = classify_announcement(item)
-                        mark_classified(item["id"])
                     except RuntimeError as e:
-                        category = None
                         print(f"Classification:   unavailable ({e})")
 
                     if category:
                         print(f"Category:         {category}")
                         dept_chat_id = DEPARTMENT_CHANNELS.get(category)
+                        dept_routed = True  # assume success / no routing needed
                         if dept_chat_id:
                             try:
                                 send_telegram_message(
@@ -397,6 +445,14 @@ if __name__ == "__main__":
                                 print(f"{category} channel:  sent")
                             except RuntimeError as e:
                                 print(f"{category} channel:  failed ({e})")
+                                dept_routed = False
+
+                        # Only mark as classified if the department send
+                        # succeeded (or no department channel was needed).
+                        # Otherwise leave it pending so classification +
+                        # routing both retry on the next run.
+                        if dept_routed:
+                            mark_classified(item["id"])
         else:
             print("No new announcements since last check.\n")
 
