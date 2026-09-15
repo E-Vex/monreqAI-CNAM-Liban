@@ -1,3 +1,4 @@
+
 <p align="center">
   <img src="logo.svg" width="120" alt="ISAE Announcements Monitor logo">
 </p>
@@ -12,7 +13,7 @@
 
 ## The problem
 
-ISAE's announcements (isae.edu.lb, part of CNAM Liban) go up on a Blogger page with no notification system attached. If you don't check it, you find out about a moved exam, a cancelled class, or a deadline change after the fact — usually from a classmate who happened to look. Most posts also aren't even about you: a CS student doesn't need to see every general-department memo, and vice versa.
+ISAE's announcements (isae.edu.lb, part of CNAM Liban) go up on a Blogger page with no notification system attached. If you don't check it, you find out about a moved exam, a cancelled class, or a deadline change after the fact, usually from a classmate who happened to look. Most posts also aren't even about you: a CS student doesn't need to see every general-department memo, and vice versa.
 
 This tool watches the page for you and only pings you when something new and relevant shows up.
 
@@ -36,11 +37,11 @@ flowchart LR
 On each run:
 
 1. Fetch the feed and diff it against a local record of already-seen announcements (`seen.json`).
-2. Post it, unconditionally, to a **general Telegram channel** — every new announcement lands there regardless of category.
+2. Post it, unconditionally, to a **general Telegram channel**: every new announcement lands there regardless of category.
 3. Ask an AI model to classify it as:
-   - `general` — relevant to all students
-   - `cs` — relevant to Computer Science students specifically
-   - `other` — a different department, or not academic
+   - `general`: relevant to all students
+   - `cs`: relevant to Computer Science students specifically
+   - `other`: a different department, or not academic
 4. If it's `cs` (or another department that later gets its own channel), also post it to that **department-specific channel**.
 
 ## Features
@@ -61,7 +62,7 @@ pip install -r requirements.txt
 
 ## Configuration
 
-Set as environment variables — never hardcode these:
+Set as environment variables (never hardcode these):
 
 ```bash
 export AI_API_KEY="your_key"
@@ -85,12 +86,12 @@ A department channel is optional: if its env var isn't set, that department's po
 python3 monitor.py
 ```
 
-Meant to run on a schedule, not continuously — a cron job every 15–30 minutes is enough for an announcements page.
+Meant to run on a schedule, not continuously; a cron job every 15–30 minutes is enough for an announcements page.
 
 ## Testing
 
-- `test_local.py` — simulates the feed with fake entries to check the "detect new announcement" logic without hitting the network
-- `test_classify.py` — runs the AI classification against a few real sample announcements
+- `test_local.py`: simulates the feed with fake entries to check the "detect new announcement" logic without hitting the network
+- `test_classify.py`: runs the AI classification against a few real sample announcements
 
 ```bash
 python3 test_local.py
@@ -104,9 +105,9 @@ Work in progress, currently built for a single recipient.
 - [x] Feed polling and diffing against `seen.json`
 - [x] AI-based relevance classification
 - [x] Telegram delivery: general channel (all posts) + per-department channel (currently just CS)
-- [ ] More department channels (civil, electrical, ...) — needs the classifier's categories expanded first
+- [ ] More department channels (civil, electrical, ...): needs the classifier's categories expanded first
 - [ ] Multi-subscriber support
 
 ## Contributing
 
-If you're at ISAE or CNAM Liban and this would save you from refreshing a Blogger page every day, contributions are welcome — especially on the Telegram delivery and multi-subscriber pieces above.
+If you're at ISAE or CNAM Liban and this would save you from refreshing a Blogger page every day, contributions are welcome, especially on the Telegram delivery and multi-subscriber pieces above.
