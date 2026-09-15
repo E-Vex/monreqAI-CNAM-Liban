@@ -221,6 +221,7 @@ def extract_entry_info(entry) -> dict:
 def check_new_announcements() -> list:
     seen = load_seen()
     entries = fetch_feed()
+    entries = list(reversed(entries))  # feed comes newest-first; reverse so we send oldest-first
     new_announcements = []
     for entry in entries:
         info = extract_entry_info(entry)
