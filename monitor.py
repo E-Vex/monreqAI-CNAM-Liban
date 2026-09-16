@@ -15,6 +15,8 @@ import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
+from ai_classifier import keyword_classify
+
 # --- Settings ----------------------------------------------------------------
 FEED_URL  = "http://annonces.isae.edu.lb/feeds/posts/default"
 SEEN_FILE = "seen.json"
@@ -155,8 +157,11 @@ Reply with exactly one word: general or cs or other"""
             key_manager.record_failure(or_key, 500)
             last_error = f"OpenRouter network error: {e}"
 
-    # --- Phase 3: Total Failure ---
-    raise RuntimeError(f"All AI providers exhausted. Last error: {last_error}")
+    # --- Phase 3: All AI providers exhausted -> keyword fallback ---
+    # Keeps the service running (degraded accuracy) instead of stopping
+    # classification entirely during an outage/rate-limit spell.
+    print(f"[classify] all AI providers failed ({last_error}) -- using keyword fallback")
+    return keyword_classify(info)
 
 
 # --- Feed & Utility Functions ------------------------------------------------
