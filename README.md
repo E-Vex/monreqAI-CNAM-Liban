@@ -65,7 +65,11 @@ pip install -r requirements.txt
 Set as environment variables (never hardcode these):
 
 ```bash
-export AI_API_KEY="your_key"
+# At least one of GEMINI_API_KEYS or OPENROUTER_API_KEY should be set
+export GEMINI_API_KEYS="key1,key2"
+export OPENROUTER_API_KEY="optional_openrouter_key"
+export OPENROUTER_MODEL="meta-llama/llama-3.1-8b-instruct" # optional
+
 export TELEGRAM_BOT_TOKEN="your_bot_token"
 export TELEGRAM_CHANNEL_GENERAL="general_channel_chat_id"
 export TELEGRAM_CHANNEL_CS="cs_channel_chat_id"
@@ -73,12 +77,12 @@ export TELEGRAM_CHANNEL_CS="cs_channel_chat_id"
 
 | Variable | Used for |
 |---|---|
-| `AI_API_KEY` | API key for the AI classification model |
+| `GEMINI_API_KEYS` | Comma-separated Gemini API keys used for AI classification |
+| `OPENROUTER_API_KEY` | Optional OpenRouter API key used as fallback when Gemini keys fail |
+| `OPENROUTER_MODEL` | Optional OpenRouter model. Defaults to `meta-llama/llama-3.1-8b-instruct` |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot used to send notifications |
 | `TELEGRAM_CHANNEL_GENERAL` | Channel that gets every new announcement |
 | `TELEGRAM_CHANNEL_CS` | Channel that gets only CS-classified announcements |
-
-A department channel is optional: if its env var isn't set, that department's posts still reach the general channel, they just skip the dedicated one. To add another department's channel later, add an env var for it and one line in `DEPARTMENT_CHANNELS` in `monitor.py`.
 
 ## Running
 
