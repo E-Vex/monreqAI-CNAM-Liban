@@ -66,7 +66,10 @@ key_manager = APIKeyManager()
 
 def _call_gemini(prompt: str, api_key: str) -> str:
     """Make a classification request to Gemini API."""
-    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 20},
+    }).encode("utf-8")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=15) as response:
@@ -99,12 +102,25 @@ def _call_openrouter(prompt: str, api_key: str) -> str:
     
     return result["choices"][0]["message"]["content"].strip().lower()
 
+_CATEGORY_WORD_RE = re.compile(r"\b(cs|computer|informatique|general|other)\b")
+
 def _parse_ai_response(answer: str) -> str:
-    """Safely extract the category from the AI's text response."""
-    answer = answer.lower()
-    if "cs" in answer or "computer" in answer or "informatique" in answer:
+    """
+    Extract the category from the AI's text response.
+
+    Looks for whole-word matches only (so "discuss" doesn't match "cs",
+    and "computer" mentioned while explaining something is NOT cs doesn't
+    false-positive). Some free models ramble instead of answering with
+    exactly one word, so we take the LAST match, since the actual verdict
+    usually comes at the end of the sentence, not the reasoning before it.
+    """
+    matches = _CATEGORY_WORD_RE.findall(answer.lower())
+    if not matches:
+        return CATEGORY_OTHER
+    last = matches[-1]
+    if last in ("cs", "computer", "informatique"):
         return CATEGORY_CS
-    if "general" in answer:
+    if last == "general":
         return CATEGORY_GENERAL
     return CATEGORY_OTHER
 
