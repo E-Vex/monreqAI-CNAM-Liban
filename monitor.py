@@ -129,15 +129,31 @@ def classify_announcement(info: dict) -> str:
     if not key_manager.gemini_keys and not key_manager.openrouter_key:
         raise RuntimeError("No AI API keys configured (GEMINI_API_KEYS or OPENROUTER_API_KEY).")
 
-    prompt = f"""You classify university announcements for an engineering institute.
+    prompt = f"""You classify university announcements for an engineering institute
+that has several departments (Computer Science/Informatique, Electrical,
+Civil, Mechanical, etc).
 
 Title: {info['title']}
 Summary: {info['summary']}
 
-Classify this announcement into exactly one category:
-- general: relevant to all students (deadlines, holidays, registration, general exams...)
-- cs: specifically relevant to Computer Science / Informatique students
-- other: relevant to another department or unrelated to studies.
+Classify into exactly one category:
+- general: relevant to ALL students regardless of department (deadlines,
+  holidays, registration, exam schedule for everyone...)
+- cs: ONLY if it is specifically about Computer Science / Informatique
+  department students or courses.
+- other: any OTHER specific department (Electrical/Genie Electrique,
+  Civil/Genie Civil, Mechanical/Genie Mecanique, etc), or unrelated to
+  studies (e.g. a generic job offer).
+
+IMPORTANT: being about "engineering" in general does NOT make something
+"cs". Only the Computer Science / Informatique department is "cs" -
+every other department is "other", even though they are also engineering.
+
+Examples:
+Title: "Genie Electrique - Oraux probatoires" -> other
+Title: "Informatique - Resultats des examens" -> cs
+Title: "Modification de l'horaire des cours intensifs" -> general
+Title: "Offre d'emploi: Comptable / Auditeur" -> other
 
 Reply with exactly one word: general or cs or other"""
 
