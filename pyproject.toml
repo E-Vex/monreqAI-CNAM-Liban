@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isae-monitor"
+version = "2.0.0"
+description = "Route ISSAE / Cnam Liban announcements to per-department Telegram channels"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["feedparser>=6.0.11"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+isae-monitor = "isae_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["isae_monitor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

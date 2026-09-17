@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Runtime state and secrets
 seen.json
+seen.json.corrupt
 seen_test.json
+.env
 run.sh
