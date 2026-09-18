@@ -1,13 +1,87 @@
+```
+# Python
 __pycache__/
 *.pyc
-.venv/
-venv/
-.pytest_cache/
-*.egg-info/
+*.pyo
+*.pyd
+*.py~
+*.py.class
+*.py.backup
+*.swp
+*.swo
 
-# Runtime state and secrets
-seen.json
-seen.json.corrupt
-seen_test.json
+# Virtual environments
+venv/
+.venv/
+env/
+.ENV/
 .env
-run.sh
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.coverage
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+*.env
+*.env.*
+!.*env.example*
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Distribution / packaging
+.Python
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.o
+*.a
+*.class
+
+# Compressed files
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.gz
+*.bz2
+*.xz
+*.7z
+*.rar
+
+# seen 
+*seen.json
+```
