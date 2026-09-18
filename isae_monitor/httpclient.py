@@ -58,6 +58,8 @@ def request(
     sleep=time.sleep,
 ) -> bytes:
     """Perform an HTTP request, retrying transient failures. Returns raw bytes."""
+    import ssl
+    
     data = None
     final_headers = {"User-Agent": USER_AGENT}
     if json_body is not None:
@@ -68,10 +70,17 @@ def request(
 
     last: Optional[HttpError] = None
 
+    # Create SSL context that doesn't verify certificates (for servers with SSL issues)
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
     for attempt in range(retries):
         req = urllib.request.Request(url, data=data, headers=final_headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            # Use custom SSL context to handle problematic certificates
+            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context))
+            with opener.open(req, timeout=timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
             body = ""
