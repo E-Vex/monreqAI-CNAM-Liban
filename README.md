@@ -125,8 +125,6 @@ Three tiers, in order:
 2. **OpenRouter**, as fallback, in JSON mode.
 3. **Keyword matching**, if every provider fails. Covers all nine departments in French, English and Arabic, and scores each department rather than taking whichever list matched first. Defaults to `general` when nothing matches, on the principle that over-sharing beats routing to the wrong department.
 
-> Gemini 1.5 models have been shut down and now return 404. `GEMINI_MODEL` defaults to a current model; set it explicitly if you want a different one.
-
 ## Configuration
 
 | Variable | Purpose |
