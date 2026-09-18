@@ -14,7 +14,8 @@ from typing import Dict, List, Optional
 
 from .departments import DEPARTMENTS, GENERAL
 
-DEFAULT_FEED_URL = "https://annonces.isae.edu.lb/feeds/posts/default?max-results=25"
+# Use HTTP instead of HTTPS to avoid SSL certificate issues with the server
+DEFAULT_FEED_URL = "http://annonces.isae.edu.lb/feeds/posts/default?max-results=25"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct"
 
