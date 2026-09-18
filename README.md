@@ -68,8 +68,8 @@ cd monreqAI-CNAM-Liban
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env    # then fill it in
-set -a; source .env; set +a
+# then you have to fill the .env file
+
 ```
 
 Check what it resolved:
