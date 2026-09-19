@@ -1,224 +1,171 @@
 /**
- * @file telegram.c
- * @brief Telegram Bot API client for sending notifications
+ * ISAE Monitor - Telegram Notification Implementation
  * 
- * Python equivalent: requests calls to Telegram Bot API
- * C Implementation: libcurl HTTP client with JSON construction
+ * Maps Python: telegram.py -> C: telegram.c
+ * 
+ * Formats and sends notifications to Telegram channels.
  */
 
 #include "isae_monitor/telegram.h"
 #include "isae_monitor/httpclient.h"
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include <cjson/cJSON.h>
 #include <ctype.h>
 
-/* Escape special characters for MarkdownV2 */
-static char* escape_markdown_v2(const char* text) {
-    if (!text) return NULL;
+void telegram_message_init(telegram_message_t* msg) {
+    if (!msg) return;
     
-    size_t len = strlen(text);
-    /* Worst case: every char needs escaping */
-    char* escaped = malloc(len * 2 + 1);
-    if (!escaped) return NULL;
-    
-    size_t j = 0;
-    const char* special_chars = "_*[]()~`>#+-=|{}.!";
-    
-    for (size_t i = 0; i < len && j < len * 2 - 1; i++) {
-        char c = text[i];
-        /* Check if character needs escaping */
-        if (strchr(special_chars, c) != NULL) {
-            escaped[j++] = '\\';
-        }
-        escaped[j++] = c;
-    }
-    escaped[j] = '\0';
-    
-    return escaped;
+    msg->text[0] = '\0';
+    msg->has_markdown = false;
 }
 
-int telegram_send_message(const char* bot_token, int64_t chat_id, 
-                          const char* title, const char* summary,
-                          const char* link, const char* department) {
-    if (!bot_token || !title || !summary) {
+isae_error_t telegram_format_message(const announcement_t* ann,
+                                     const char* category,
+                                     telegram_message_t* msg) {
+    if (!ann || !category || !msg) {
         return ISAE_ERR_INVALID_PARAM;
     }
     
-    int ret = ISAE_OK;
-    char* url = NULL;
-    char* payload = NULL;
-    HttpResponse response = {0};
+    telegram_message_init(msg);
     
-    /* Build URL */
-    url = malloc(512);
-    if (!url) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
-    snprintf(url, 512, "https://api.telegram.org/bot%s/sendMessage", bot_token);
+    /* Build formatted message with Markdown */
+    char* title = ann->title ? ann->title : "No title";
+    char* summary = ann->summary ? ann->summary : "";
+    char* dept = ann->department_key ? ann->department_key : "Unknown";
     
-    /* Format message in MarkdownV2 style */
-    char* escaped_title = escape_markdown_v2(title);
-    char* escaped_summary = escape_markdown_v2(summary);
-    char* escaped_dept = department ? escape_markdown_v2(department) : strdup("Unknown");
-    
-    if (!escaped_title || !escaped_summary || !escaped_dept) {
-        free(escaped_title);
-        free(escaped_summary);
-        free(escaped_dept);
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
+    /* Truncate summary if too long (Telegram limit is 4096) */
+    char short_summary[512];
+    if (strlen(summary) > sizeof(short_summary) - 3) {
+        strncpy(short_summary, summary, sizeof(short_summary) - 3);
+        strcat(short_summary, "...");
+    } else {
+        strncpy(short_summary, summary, sizeof(short_summary) - 1);
     }
     
-    /* Build message text */
-    char message[4096];
-    int msg_len = snprintf(message, sizeof(message),
-        "*📢 New Announcement*\n\n"
-        "*Department:* %s\n"
-        "*Title:* %s\n\n"
-        "%s\n",
-        escaped_dept, escaped_title, escaped_summary);
+    /* Format with Markdown */
+    snprintf(msg->text, sizeof(msg->text),
+             "*📢 %s*\n\n"
+             "*Department:* %s\n"
+             "*Category:* %s\n\n"
+             "%s\n\n"
+             "[Read more](%s)",
+             title,
+             dept,
+             category,
+             short_summary,
+             ann->url ? ann->url : "");
     
-    if (link && strlen(link) > 0) {
-        msg_len += snprintf(message + msg_len, sizeof(message) - msg_len,
-                           "\n[Read More](%s)", link);
-    }
+    msg->has_markdown = true;
     
-    free(escaped_title);
-    free(escaped_summary);
-    free(escaped_dept);
-    
-    /* Escape message for JSON */
-    size_t msg_len_str = strlen(message);
-    size_t json_size = msg_len_str * 2 + 256;
-    payload = malloc(json_size);
-    if (!payload) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
-    
-    /* Simple JSON escaping */
-    char* json_escaped = malloc(msg_len_str * 2 + 1);
-    if (!json_escaped) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
-    
-    size_t j = 0;
-    for (size_t i = 0; i < msg_len_str && j < msg_len_str * 2 - 1; i++) {
-        char c = message[i];
-        if (c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t') {
-            json_escaped[j++] = '\\';
-            switch (c) {
-                case '\n': json_escaped[j++] = 'n'; break;
-                case '\r': json_escaped[j++] = 'r'; break;
-                case '\t': json_escaped[j++] = 't'; break;
-                default: json_escaped[j++] = c; break;
-            }
-        } else {
-            json_escaped[j++] = c;
-        }
-    }
-    json_escaped[j] = '\0';
-    
-    snprintf(payload, json_size,
-             "{\"chat_id\":%" PRId64 ",\"text\":\"%s\",\"parse_mode\":\"MarkdownV2\"}",
-             chat_id, json_escaped);
-    
-    free(json_escaped);
-    
-    /* Set headers */
-    const char* headers[] = {
-        "Content-Type: application/json",
-        NULL
-    };
-    
-    /* Make HTTP POST request */
-    ret = http_post(url, payload, strlen(payload), headers, &response, 30);
-    if (ret != ISAE_OK) {
-        goto cleanup;
-    }
-    
-    /* Check response for success */
-    if (response.body && response.body_size > 0) {
-        /* Ensure null termination */
-        if (response.body[response.body_size - 1] != '\0') {
-            char* new_body = realloc(response.body, response.body_size + 1);
-            if (new_body) {
-                response.body = new_body;
-                response.body[response.body_size] = '\0';
-            }
-        }
-        
-        /* Simple check for \"ok\":true */
-        if (strstr(response.body, "\"ok\":true") == NULL &&
-            strstr(response.body, "\"ok\": true") == NULL) {
-            fprintf(stderr, "[TELEGRAM] API returned error: %s\n", response.body);
-            ret = ISAE_ERR_HTTP;
-        }
-    }
-    
-cleanup:
-    free(url);
-    free(payload);
-    http_response_free(&response);
-    return ret;
+    return ISAE_OK;
 }
 
-int telegram_notify_announcement(const Config* config, const Announcement* ann,
-                                 const char* department) {
-    if (!config || !ann) {
+isae_error_t telegram_send_message(const char* bot_token,
+                                   const char* chat_id,
+                                   const telegram_message_t* msg,
+                                   int timeout_seconds) {
+    if (!bot_token || !chat_id || !msg) {
         return ISAE_ERR_INVALID_PARAM;
     }
     
-    /* Check if Telegram is configured */
-    if (!config->telegram_bot_token || !config->telegram_chat_ids ||
-        strlen(config->telegram_bot_token) == 0) {
-        return ISAE_OK; /* Not configured, skip silently */
+    /* Build JSON request */
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "chat_id", chat_id);
+    cJSON_AddStringToObject(root, "text", msg->text);
+    
+    if (msg->has_markdown) {
+        cJSON_AddStringToObject(root, "parse_mode", "Markdown");
     }
     
-    int ret = ISAE_OK;
-    int overall_ret = ISAE_OK;
+    char* json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
     
-    /* Parse chat IDs and send to each */
-    char* chat_ids_str = strdup(config->telegram_chat_ids);
-    if (!chat_ids_str) {
+    if (!json_str) {
         return ISAE_ERR_MEMORY;
     }
     
-    char* saveptr = NULL;
-    char* token = strtok_r(chat_ids_str, ",", &saveptr);
+    /* Build URL */
+    char url[512];
+    snprintf(url, sizeof(url),
+             "https://api.telegram.org/bot%s/sendMessage",
+             bot_token);
     
-    while (token != NULL) {
+    /* Make request */
+    http_response_t response;
+    http_response_init(&response);
+    
+    http_client_config_t config;
+    http_client_config_default(&config);
+    config.timeout_seconds = timeout_seconds;
+    
+    isae_error_t err = http_post_json(url, json_str, &response, &config, NULL);
+    free(json_str);
+    
+    if (err != ISAE_OK) {
+        http_response_cleanup(&response);
+        return err;
+    }
+    
+    /* Check response */
+    bool success = false;
+    if (response.body) {
+        cJSON* resp_json = cJSON_Parse(response.body);
+        if (resp_json) {
+            cJSON* ok = cJSON_GetObjectItem(resp_json, "ok");
+            if (ok && cJSON_IsBool(ok) && ok->valueint) {
+                success = true;
+            }
+            cJSON_Delete(resp_json);
+        }
+    }
+    
+    http_response_cleanup(&response);
+    
+    return success ? ISAE_OK : ISAE_ERR_HTTP;
+}
+
+isae_error_t telegram_notify(const char* bot_token,
+                             const char* chat_ids_csv,
+                             const announcement_t* ann,
+                             const char* category,
+                             int timeout_seconds) {
+    if (!bot_token || !chat_ids_csv || !ann || !category) {
+        return ISAE_ERR_INVALID_PARAM;
+    }
+    
+    /* Format message */
+    telegram_message_t msg;
+    isae_error_t err = telegram_format_message(ann, category, &msg);
+    if (err != ISAE_OK) {
+        return err;
+    }
+    
+    /* Parse comma-separated chat IDs and send to each */
+    char chat_ids_copy[MAX_API_KEY_LEN * 4];
+    strncpy(chat_ids_copy, chat_ids_csv, sizeof(chat_ids_copy) - 1);
+    chat_ids_copy[sizeof(chat_ids_copy) - 1] = '\0';
+    
+    char* saveptr = NULL;
+    char* token = strtok_r(chat_ids_copy, ",", &saveptr);
+    
+    isae_error_t last_err = ISAE_OK;
+    int sent_count = 0;
+    
+    while (token) {
         /* Trim whitespace */
         while (*token && isspace((unsigned char)*token)) token++;
         char* end = token + strlen(token) - 1;
         while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
         
-        if (strlen(token) > 0) {
-            int64_t chat_id = strtoll(token, NULL, 10);
-            
-            ret = telegram_send_message(
-                config->telegram_bot_token,
-                chat_id,
-                ann->title ? ann->title : "No Title",
-                ann->summary ? ann->summary : "No Summary",
-                ann->link ? ann->link : "",
-                department
-            );
-            
-            if (ret != ISAE_OK) {
-                fprintf(stderr, "[TELEGRAM] Failed to send to chat %s: %d\n", token, ret);
-                overall_ret = ret;
-            } else {
-                fprintf(stderr, "[TELEGRAM] Sent notification to chat %s\n", token);
+        if (*token) {
+            err = telegram_send_message(bot_token, token, &msg, timeout_seconds);
+            if (err == ISAE_OK) {
+                sent_count++;
             }
+            last_err = err;
         }
         
         token = strtok_r(NULL, ",", &saveptr);
     }
     
-    free(chat_ids_str);
-    return overall_ret;
+    return sent_count > 0 ? ISAE_OK : (last_err != ISAE_OK ? last_err : ISAE_ERR_INVALID_PARAM);
 }
