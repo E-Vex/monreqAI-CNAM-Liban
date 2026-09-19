@@ -2,7 +2,12 @@
   <img src="logo.png" alt="monreqAI" width="300"/>
 </p>
 
-<br/>
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
+  <img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="MIT License"/>
+  <img src="https://img.shields.io/badge/Status-Work%20in%20Progress-f59e0b?style=for-the-badge" alt="WIP"/>
+  <img src="https://img.shields.io/badge/Telegram-Notifications-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram"/>
+</p>
 
 ## The problem
 
