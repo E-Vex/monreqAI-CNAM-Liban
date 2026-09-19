@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <libgen.h>
+#include <stdio.h>
 
 /* cJSON is included via pkg-config in build system */
 #include <cjson/cJSON.h>
@@ -101,7 +102,7 @@ isae_error_t state_load(state_manager_t* state) {
     
     /* Check version and migrate if needed */
     cJSON* version = cJSON_GetObjectItem(root, "version");
-    int file_version = version ? version->valueint : 1;
+    (void)version;  /* Version info available if needed for future migrations */
     
     /* Get entries array */
     cJSON* entries_json = cJSON_GetObjectItem(root, "entries");

@@ -97,27 +97,29 @@ isae_error_t classifier_classify(classifier_t* classifier,
     
     /* AI failed or not configured, fall back to keywords */
 keyword_fallback:
-    keyword_result_t kw_result;
-    keyword_result_init(&kw_result);
-    
-    isae_error_t kw_err = keywords_classify(ann, &kw_result);
-    
-    if (kw_err == ISAE_OK && kw_result.matched) {
-        strncpy(result->category, kw_result.category, MAX_CATEGORY_NAME - 1);
-        result->category[MAX_CATEGORY_NAME - 1] = '\0';
-        result->confidence = kw_result.score > 0 ? kw_result.score * 20 : 30;
-        strncpy(result->method, "keyword", sizeof(result->method) - 1);
-        result->success = true;
-    } else {
-        /* Even without match, return GENERAL category */
-        strncpy(result->category, kw_result.category, MAX_CATEGORY_NAME - 1);
-        result->category[MAX_CATEGORY_NAME - 1] = '\0';
-        result->confidence = 10;
-        strncpy(result->method, "keyword", sizeof(result->method) - 1);
-        result->success = true;  /* Still consider it a success with default */
+    {
+        keyword_result_t kw_result;
+        keyword_result_init(&kw_result);
+        
+        isae_error_t kw_err = keywords_classify(ann, &kw_result);
+        
+        if (kw_err == ISAE_OK && kw_result.matched) {
+            strncpy(result->category, kw_result.category, MAX_CATEGORY_NAME - 1);
+            result->category[MAX_CATEGORY_NAME - 1] = '\0';
+            result->confidence = kw_result.score > 0 ? kw_result.score * 20 : 30;
+            strncpy(result->method, "keyword", sizeof(result->method) - 1);
+            result->success = true;
+        } else {
+            /* Even without match, return GENERAL category */
+            strncpy(result->category, kw_result.category, MAX_CATEGORY_NAME - 1);
+            result->category[MAX_CATEGORY_NAME - 1] = '\0';
+            result->confidence = 10;
+            strncpy(result->method, "keyword", sizeof(result->method) - 1);
+            result->success = true;  /* Still consider it a success with default */
+        }
+        
+        keyword_result_cleanup(&kw_result);
     }
-    
-    keyword_result_cleanup(&kw_result);
     
     return ISAE_OK;
 }
