@@ -1,4 +1,0 @@
-# Runtime dependencies. Deliberately minimal: this runs unattended from a
-# scheduler, so every extra package is one more thing that can silently break
-# a job nobody is watching. Everything else uses the standard library.
-feedparser==6.0.11
