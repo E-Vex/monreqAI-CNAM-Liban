@@ -1,42 +1,63 @@
-# ISAE Monitor C - Makefile
-# Pure C11 implementation with libcurl and libxml2
+# ISAE Monitor C - GNU Makefile
 
 CC = gcc
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -O2 $(shell pkg-config --cflags libcurl libcjson libxml-2.0)
-LDFLAGS = -lcurl -lxml2 -lm
+CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -O2 -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE
+DEBUG_FLAGS = -g -O0 -DDEBUG
+INCLUDES = -Iinclude
 
-# Directories
-SRCDIR = src
-INCDIR = include
-BUILDDIR = build
+# pkg-config for dependencies
+PKG_CONFIG = pkg-config
+CURL_CFLAGS = $(shell $(PKG_CONFIG) --cflags libcurl)
+CURL_LIBS = $(shell $(PKG_CONFIG) --libs libcurl)
+LIBXML2_CFLAGS = $(shell $(PKG_CONFIG) --cflags libxml-2.0)
+LIBXML2_LIBS = $(shell $(PKG_CONFIG) --libs libxml-2.0)
+CJSON_CFLAGS = $(shell $(PKG_CONFIG) --cflags libcjson)
+CJSON_LIBS = $(shell $(PKG_CONFIG) --libs libcjson)
+
+ALL_CFLAGS = $(CFLAGS) $(INCLUDES) $(CURL_CFLAGS) $(LIBXML2_CFLAGS) $(CJSON_CFLAGS)
+ALL_LIBS = $(CURL_LIBS) $(LIBXML2_LIBS) $(CJSON_LIBS) -lm
 
 # Source files
-SRCS = $(wildcard $(SRCDIR)/*.c)
-OBJS = $(SRCS:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
+SRCS = src/main.c \
+       src/departments.c \
+       src/models.c \
+       src/config.c \
+       src/state.c \
+       src/httpclient.c \
+       src/feed.c \
+       src/providers.c \
+       src/keywords.c \
+       src/classifier.c \
+       src/telegram.c \
+       src/pipeline.c
 
-# Target executable
+OBJS = $(SRCS:src/%.c=build/%.o)
 TARGET = isae_monitor
 
 # Default target
-all: $(BUILDDIR) $(TARGET)
+all: $(TARGET)
 
 # Create build directory
-$(BUILDDIR):
-	mkdir -p $(BUILDDIR)
+build:
+	mkdir -p build
 
 # Link executable
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(ALL_CFLAGS) -o $@ $(OBJS) $(ALL_LIBS)
 
 # Compile source files
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
-	$(CC) $(CFLAGS) -I$(INCDIR) -c -o $@ $<
+build/%.o: src/%.c | build
+	$(CC) $(ALL_CFLAGS) -c $< -o $@
+
+# Debug build
+debug: CFLAGS += $(DEBUG_FLAGS)
+debug: clean $(TARGET)
 
 # Clean build artifacts
 clean:
-	rm -rf $(BUILDDIR) $(TARGET)
+	rm -rf build $(TARGET)
 
-# Install to system
+# Install
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin/
 
@@ -44,26 +65,27 @@ install: $(TARGET)
 uninstall:
 	rm -f /usr/local/bin/$(TARGET)
 
-# Debug build
-debug: CFLAGS += -g -DDEBUG
-debug: clean all
-
-# Run with valgrind (memory check)
+# Run valgrind memory check (requires test setup)
 valgrind: $(TARGET)
-	valgrind --leak-check=full --show-leak-kinds=all ./$(TARGET) --help
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes ./$(TARGET) --once
 
-# Dependencies (auto-generated would be better, but this works for small projects)
-$(BUILDDIR)/main.o: $(SRCDIR)/main.c $(INCDIR)/isae_monitor/config.h $(INCDIR)/isae_monitor/state.h $(INCDIR)/isae_monitor/pipeline.h $(INCDIR)/isae_monitor/common.h
-$(BUILDDIR)/departments.o: $(SRCDIR)/departments.c $(INCDIR)/isae_monitor/departments.h $(INCDIR)/isae_monitor/common.h
-$(BUILDDIR)/models.o: $(SRCDIR)/models.c $(INCDIR)/isae_monitor/models.h $(INCDIR)/isae_monitor/common.h
-$(BUILDDIR)/config.o: $(SRCDIR)/config.c $(INCDIR)/isae_monitor/config.h $(INCDIR)/isae_monitor/common.h
-$(BUILDDIR)/state.o: $(SRCDIR)/state.c $(INCDIR)/isae_monitor/state.h $(INCDIR)/isae_monitor/common.h
-$(BUILDDIR)/httpclient.o: $(SRCDIR)/httpclient.c $(INCDIR)/isae_monitor/httpclient.h $(INCDIR)/isae_monitor/common.h
-$(BUILDDIR)/feed.o: $(SRCDIR)/feed.c $(INCDIR)/isae_monitor/feed.h $(INCDIR)/isae_monitor/httpclient.h $(INCDIR)/isae_monitor/models.h
-$(BUILDDIR)/providers.o: $(SRCDIR)/providers.c $(INCDIR)/isae_monitor/providers.h $(INCDIR)/isae_monitor/httpclient.h
-$(BUILDDIR)/keywords.o: $(SRCDIR)/keywords.c $(INCDIR)/isae_monitor/keywords.h $(INCDIR)/isae_monitor/departments.h
-$(BUILDDIR)/classifier.o: $(SRCDIR)/classifier.c $(INCDIR)/isae_monitor/classifier.h $(INCDIR)/isae_monitor/providers.h $(INCDIR)/isae_monitor/keywords.h
-$(BUILDDIR)/telegram.o: $(SRCDIR)/telegram.c $(INCDIR)/isae_monitor/telegram.h $(INCDIR)/isae_monitor/httpclient.h
-$(BUILDDIR)/pipeline.o: $(SRCDIR)/pipeline.c $(INCDIR)/isae_monitor/pipeline.h $(INCDIR)/isae_monitor/feed.h $(INCDIR)/isae_monitor/classifier.h $(INCDIR)/isae_monitor/telegram.h
+# Check dependencies
+check-deps:
+	@echo "Checking dependencies..."
+	@$(PKG_CONFIG) --exists libcurl && echo "✓ libcurl found" || echo "✗ libcurl not found"
+	@$(PKG_CONFIG) --exists libxml-2.0 && echo "✓ libxml2 found" || echo "✗ libxml2 not found"
+	@$(PKG_CONFIG) --exists libcjson && echo "✓ libcjson found" || echo "✗ libcjson not found"
 
-.PHONY: all clean install uninstall debug valgrind
+# Help
+help:
+	@echo "ISAE Monitor C - Makefile Targets:"
+	@echo "  all        - Build the project (default)"
+	@echo "  debug      - Build with debug symbols"
+	@echo "  clean      - Remove build artifacts"
+	@echo "  install    - Install to /usr/local/bin"
+	@echo "  uninstall  - Remove from /usr/local/bin"
+	@echo "  valgrind   - Run memory leak check"
+	@echo "  check-deps - Verify dependencies"
+	@echo "  help       - Show this help"
+
+.PHONY: all debug clean install uninstall valgrind check-deps help
