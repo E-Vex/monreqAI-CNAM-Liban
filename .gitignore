@@ -1,4 +1,3 @@
-```
 # Build artifacts
 *.o
 *.obj
@@ -9,6 +8,20 @@
 *.out
 build/
 dist/
+cmake-build-*/
+out/
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+_deps/
+
+# Binary - project output
+/isae_monitor
+/isae_monitor.exe
+isae_monitor_c/isae_monitor
 
 # Dependencies
 node_modules/
@@ -17,42 +30,29 @@ venv/
 __pycache__/
 *.egg-info/
 
-# Logs and temp files
+# Logs / temp / editors
 *.log
 *.tmp
 *.swp
-
-# Editors
+*~
 .vscode/
 .idea/
-
-# System files
 .DS_Store
 Thumbs.db
 
-# Environment
+# Env - keep example, ignore real
 .env
 .env.local
-*.env.*
+*.env.local
 
 # Coverage
 coverage/
 htmlcov/
 .coverage
-
-# C-specific
-*.i
-*.s
-*.ii
-*.cc
-*.ii
-*.s
-
-# Test outputs
 *.gcda
 *.gcno
 *.gcov
 
-# C binary output - specific paths only
-/isae_monitor
-isae_monitor_c/isae_monitor
+# C intermediates
+*.i
+*.s
