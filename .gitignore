@@ -52,5 +52,7 @@ htmlcov/
 *.gcda
 *.gcno
 *.gcov
-```isae_monitor_c/isae_monitor
-isae_monitor
+
+# C binary output - specific paths only
+/isae_monitor
+isae_monitor_c/isae_monitor
