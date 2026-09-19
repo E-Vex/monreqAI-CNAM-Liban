@@ -9,6 +9,7 @@
 #include "isae_monitor/pipeline.h"
 #include <signal.h>
 #include <getopt.h>
+#include <sys/types.h>
 
 static pipeline_t g_pipeline;
 static volatile sig_atomic_t g_interrupted = 0;
