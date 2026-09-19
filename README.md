@@ -1,16 +1,8 @@
 <p align="center">
-  <img src="logo.svg" width="120" alt="ISAE Announcements Monitor logo">
+  <img src="logo.svg" alt="monreqAI — ISAE Announcements Monitor" width="680"/>
 </p>
 
-<h1 align="center">ISAE Announcements Monitor</h1>
-<p align="center">Turns the ISSAE / Cnam Liban announcements page into a push notification, routed to the department it actually concerns.</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/python-3.9%2B-blue" alt="Python 3.9+">
-  <img src="https://img.shields.io/badge/departments-9-green" alt="9 departments">
-  <img src="https://img.shields.io/badge/runtime%20deps-1-lightgrey" alt="1 runtime dependency">
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license">
-</p>
+<br/>
 
 ## The problem
 
