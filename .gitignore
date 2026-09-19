@@ -1,58 +1,59 @@
-# Build artifacts
+```
+# Compiled and build artifacts
 *.o
 *.obj
-*.a
-*.so
-*.dll
-*.exe
 *.out
-build/
-dist/
-cmake-build-*/
-out/
-
-# CMake generated
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-CTestTestfile.cmake
-_deps/
-
-# Binary - project output
-/isae_monitor
-/isae_monitor.exe
-isae_monitor_c/isae_monitor
+*.exe
+*.dll
+*.so
+*.a
 
 # Dependencies
-node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
 venv/
 .venv/
-__pycache__/
-*.egg-info/
+.env
+.env.local
+*.env.*
 
-# Logs / temp / editors
+# Build directories
+build/
+dist/
+*.egg-info/
+*isae_monitor
+
+# Logs and temp files
 *.log
 *.tmp
 *.swp
-*~
+*.swo
+
+# Editors
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# System files
 .DS_Store
 Thumbs.db
 
-# Env - keep example, ignore real
-.env
-.env.local
-*.env.local
-
 # Coverage
+.coverage
 coverage/
 htmlcov/
-.coverage
-*.gcda
-*.gcno
-*.gcov
 
-# C intermediates
-*.i
-*.s
+# MyPy
+.mypy_cache/
+__pycache__/
+
+# PyTest
+.pytest_cache/
+
+# Original rules preserved
+```

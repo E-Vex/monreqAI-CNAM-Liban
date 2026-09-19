@@ -9,6 +9,7 @@
 #include "isae_monitor/providers.h"
 #include "isae_monitor/httpclient.h"
 #include <cjson/cJSON.h>
+#include <ctype.h>
 
 void ai_response_init(ai_response_t* resp) {
     if (!resp) return;
