@@ -1,158 +1,165 @@
 /**
- * @file keywords.c
- * @brief Keyword-based fallback classifier implementation
+ * ISAE Monitor - Keyword Classifier Implementation
+ * 
+ * Maps Python: keywords.py -> C: keywords.c
+ * 
+ * Fallback classification using keyword matching when AI is unavailable.
  */
 
 #include "isae_monitor/keywords.h"
-#include "isae_monitor/departments.h"
-#include <string.h>
+#include <ctype.h>
 
-/* General markers - signal institute-wide notices */
-const char* GENERAL_MARKERS[] = {
-    "tous les auditeurs", "tous les etudiants", "a tous", "all students",
-    "inscription", "registration", "frais", "fees", "rentree", "calendrier",
-    "vacance", "conge", "holiday", "ferme", "closure", "transport",
-    "horaire", "schedule", "deadline", "delai", "attestation", "diplome",
-    "الى جميع الطلاب", "جميع الطلاب", "كافة المراكز", "التسجيل", "الرسوم",
-    "عطلة", "المواعيد", "اعلان عام"
+/* Keyword categories mapping */
+typedef struct {
+    const char* category;
+    const char** keywords;
+    size_t num_keywords;
+} keyword_category_t;
+
+/* Keywords for each category */
+static const char* keywords_jobs[] = {
+    "emploi", "job", "recrutement", "embauche", "poste", "carriere",
+    "stage", "internship", "offre", "candidate", NULL
 };
-const size_t GENERAL_MARKERS_COUNT = sizeof(GENERAL_MARKERS) / sizeof(GENERAL_MARKERS[0]);
 
-/* Other markers - signal non-student notices */
-const char* OTHER_MARKERS[] = {
-    "offre d'emploi", "job offer", "recrute", "recruitment", "vacancy",
-    "appel d'offres", "tender", "فرص عمل", "وظيفة", "مناقصة"
+static const char* keywords_events[] = {
+    "conference", "seminar", "colloque", "evenement", "event",
+    "reunion", "meeting", "presentation", "soutenance", "defense",
+    "journee", "atelier", "workshop", NULL
 };
-const size_t OTHER_MARKERS_COUNT = sizeof(OTHER_MARKERS) / sizeof(OTHER_MARKERS[0]);
 
-static bool contains_keyword(const char* text, const char* keyword) {
-    if (!text || !keyword) return false;
-    return strstr(text, keyword) != NULL;
+static const char* keywords_courses[] = {
+    "cours", "course", "formation", "enseignement", "classe",
+    "examen", "evaluation", "tp", "td", "projet", "student", NULL
+};
+
+static const char* keywords_research[] = {
+    "recherche", "research", "publication", "article", "these",
+    "doctorat", "phd", "laboratoire", "lab", "scientifique", NULL
+};
+
+static const char* keywords_admin[] = {
+    "administration", "inscription", "registration", "secretariat",
+    "bureau", "office", "procedure", "dossier", NULL
+};
+
+static keyword_category_t g_categories[] = {
+    {"JOBS", keywords_jobs, sizeof(keywords_jobs) / sizeof(keywords_jobs[0]) - 1},
+    {"EVENTS", keywords_events, sizeof(keywords_events) / sizeof(keywords_events[0]) - 1},
+    {"COURSES", keywords_courses, sizeof(keywords_courses) / sizeof(keywords_courses[0]) - 1},
+    {"RESEARCH", keywords_research, sizeof(keywords_research) / sizeof(keywords_research[0]) - 1},
+    {"ADMIN", keywords_admin, sizeof(keywords_admin) / sizeof(keywords_admin[0]) - 1},
+};
+
+static size_t g_num_categories = sizeof(g_categories) / sizeof(g_categories[0]);
+
+void keyword_result_init(keyword_result_t* result) {
+    if (!result) return;
+    
+    result->category[0] = '\0';
+    result->score = 0;
+    result->matched = false;
 }
 
-isae_error_t score_departments(const announcement_t* ann,
-                                dept_score_t* scores,
-                                size_t* score_count,
-                                size_t max_scores) {
-    if (!ann || !scores || !score_count) return ISAE_ERR_INVALID_ARG;
-    
-    departments_init();
-    *score_count = 0;
-    
-    /* Get normalized search text */
-    char search_text[MAX_ANNOUNCEMENT_TITLE + MAX_ANNOUNCEMENT_SUMMARY + 2];
-    isae_error_t err = announcement_get_search_text(ann, search_text, sizeof(search_text));
-    if (err != ISAE_OK) return err;
-    
-    /* Score each department */
-    for (size_t i = 0; i < departments_get_count() && *score_count < max_scores; i++) {
-        const department_t* dept = departments_get_by_index(i);
-        if (!dept) continue;
-        
-        int score = 0;
-        
-        /* Check each keyword */
-        for (size_t k = 0; k < dept->keyword_count; k++) {
-            const char* keyword = dept->keywords[k];
-            
-            /* Normalize keyword */
-            char norm_keyword[MAX_KEYWORD];
-            err = normalize_text(keyword, norm_keyword, sizeof(norm_keyword));
-            if (err != ISAE_OK) continue;
-            
-            if (!norm_keyword[0]) continue;
-            
-            /* Title matches are weighted higher */
-            if (strstr(search_text, norm_keyword)) {
-                /* Multi-word keywords are more specific */
-                int weight = (strchr(norm_keyword, ' ')) ? TITLE_WEIGHT * 2 : TITLE_WEIGHT;
-                score += weight;
-            }
-        }
-        
-        if (score > 0) {
-            strncpy(scores[*score_count].key, dept->key, MAX_DEPARTMENT_KEY - 1);
-            scores[*score_count].score = score;
-            (*score_count)++;
-        }
-    }
-    
-    return ISAE_OK;
+void keyword_result_cleanup(keyword_result_t* result) {
+    /* Nothing to free - fixed size arrays */
+    (void)result;
 }
 
-isae_error_t keywords_classify(const announcement_t* ann,
-                                char* category, size_t category_size) {
-    if (!ann || !category || category_size == 0) return ISAE_ERR_INVALID_ARG;
-    
-    /* Get search text */
-    char search_text[MAX_ANNOUNCEMENT_TITLE + MAX_ANNOUNCEMENT_SUMMARY + 2];
-    isae_error_t err = announcement_get_search_text(ann, search_text, sizeof(search_text));
-    if (err != ISAE_OK) return err;
-    
-    /* Check for OTHER markers first */
-    for (size_t i = 0; i < OTHER_MARKERS_COUNT; i++) {
-        char norm_marker[MAX_KEYWORD];
-        err = normalize_text(OTHER_MARKERS[i], norm_marker, sizeof(norm_marker));
-        if (err != ISAE_OK) continue;
-        
-        if (strstr(search_text, norm_marker)) {
-            strncpy(category, DEPT_CATEGORY_OTHER, category_size - 1);
-            category[category_size - 1] = '\0';
-            return ISAE_OK;
-        }
+static int count_keyword_matches(const char* text, const char** keywords, size_t num_keywords) {
+    if (!text || !keywords) {
+        return 0;
     }
     
-    /* Score departments */
-    dept_score_t scores[MAX_DEPARTMENTS];
-    size_t score_count = 0;
-    err = score_departments(ann, scores, &score_count, MAX_DEPARTMENTS);
-    if (err != ISAE_OK) return err;
+    int count = 0;
+    const char* p = text;
     
-    if (score_count > 0) {
-        /* Find best score */
-        int best_score = scores[0].score;
-        for (size_t i = 1; i < score_count; i++) {
-            if (scores[i].score > best_score) {
-                best_score = scores[i].score;
-            }
-        }
-        
-        /* Count winners with best score */
-        size_t winner_count = 0;
-        for (size_t i = 0; i < score_count; i++) {
-            if (scores[i].score == best_score) {
-                winner_count++;
-            }
-        }
-        
-        /* Only route if there's a single clear winner */
-        if (winner_count == 1) {
-            for (size_t i = 0; i < score_count; i++) {
-                if (scores[i].score == best_score) {
-                    strncpy(category, scores[i].key, category_size - 1);
-                    category[category_size - 1] = '\0';
-                    return ISAE_OK;
+    while (*p) {
+        for (size_t k = 0; k < num_keywords; k++) {
+            const char* kw = keywords[k];
+            size_t kw_len = strlen(kw);
+            
+            /* Check for word boundary match */
+            if (strncasecmp(p, kw, kw_len) == 0) {
+                /* Check word boundaries */
+                int valid_start = (p == text || !isalnum((unsigned char)*(p-1)));
+                int valid_end = (!p[kw_len] || !isalnum((unsigned char)p[kw_len]));
+                
+                if (valid_start && valid_end) {
+                    count++;
+                    p += kw_len;
+                    break;
                 }
             }
         }
+        p++;
     }
     
-    /* Check for GENERAL markers */
-    for (size_t i = 0; i < GENERAL_MARKERS_COUNT; i++) {
-        char norm_marker[MAX_KEYWORD];
-        err = normalize_text(GENERAL_MARKERS[i], norm_marker, sizeof(norm_marker));
-        if (err != ISAE_OK) continue;
+    return count;
+}
+
+isae_error_t keywords_classify(const announcement_t* ann, 
+                               keyword_result_t* result) {
+    if (!ann || !result) {
+        return ISAE_ERR_INVALID_PARAM;
+    }
+    
+    keyword_result_init(result);
+    
+    /* Get normalized text or combine title + summary */
+    const char* text = ann->normalized_text;
+    char temp_text[MAX_TEXT_NORMALIZED_LEN];
+    
+    if (!text || !*text) {
+        /* Build combined text */
+        temp_text[0] = '\0';
+        if (ann->title) {
+            strncpy(temp_text, ann->title, sizeof(temp_text) - 1);
+        }
+        if (ann->summary) {
+            size_t len = strlen(temp_text);
+            if (len < sizeof(temp_text) - 2) {
+                temp_text[len] = ' ';
+                strncat(temp_text, ann->summary, sizeof(temp_text) - len - 2);
+            }
+        }
         
-        if (strstr(search_text, norm_marker)) {
-            strncpy(category, DEPT_CATEGORY_GENERAL, category_size - 1);
-            category[category_size - 1] = '\0';
-            return ISAE_OK;
+        /* Normalize it */
+        isae_error_t err = normalize_text(temp_text, temp_text, sizeof(temp_text));
+        if (err == ISAE_OK) {
+            text = temp_text;
+        } else {
+            text = ann->title ? ann->title : "";
         }
     }
     
-    /* Conservative default: general rather than other */
-    strncpy(category, DEPT_CATEGORY_GENERAL, category_size - 1);
-    category[category_size - 1] = '\0';
+    /* Score each category */
+    int best_score = 0;
+    const char* best_category = "UNKNOWN";
+    
+    for (size_t i = 0; i < g_num_categories; i++) {
+        int score = count_keyword_matches(text, g_categories[i].keywords, 
+                                          g_categories[i].num_keywords);
+        
+        if (score > best_score) {
+            best_score = score;
+            best_category = g_categories[i].category;
+        }
+    }
+    
+    /* Set result */
+    if (best_score > 0) {
+        strncpy(result->category, best_category, MAX_CATEGORY_NAME - 1);
+        result->category[MAX_CATEGORY_NAME - 1] = '\0';
+        result->score = best_score;
+        result->matched = true;
+    } else {
+        /* Default fallback */
+        strncpy(result->category, "GENERAL", MAX_CATEGORY_NAME - 1);
+        result->category[MAX_CATEGORY_NAME - 1] = '\0';
+        result->score = 0;
+        result->matched = false;
+    }
     
     return ISAE_OK;
 }
