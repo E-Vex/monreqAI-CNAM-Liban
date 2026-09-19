@@ -1,39 +1,33 @@
-/**
- * @file providers.h
- * @brief LLM provider API calls (Gemini, OpenRouter)
- */
-
 #ifndef ISAE_MONITOR_PROVIDERS_H
 #define ISAE_MONITOR_PROVIDERS_H
 
 #include "common.h"
+#include "models.h"
 
-/* Provider error structure */
+/* AI classification response */
 typedef struct {
-    isae_error_t code;
-    long status_code;     /* HTTP status for API errors */
-    char message[256];
-} provider_error_t;
+    char category[MAX_CATEGORY_NAME];
+    int confidence;
+    char raw_response[1024];
+    bool success;
+} ai_response_t;
 
-/* Maximum tokens for response */
-#define MAX_OUTPUT_TOKENS 512
+/* Initialize AI response */
+void ai_response_init(ai_response_t* resp);
 
-/* Classify text using Gemini API */
-isae_error_t ai_classify_gemini(
-    const char* api_key,
-    const char* title,
-    const char* summary,
-    char* department_out,
-    size_t out_size
-);
+/* Free AI response resources */
+void ai_response_cleanup(ai_response_t* resp);
 
-/* Classify text using OpenRouter API */
-isae_error_t ai_classify_openrouter(
-    const char* api_key,
-    const char* title,
-    const char* summary,
-    char* department_out,
-    size_t out_size
-);
+/* Classify using Google Gemini API */
+isae_error_t gemini_classify(const announcement_t* ann, 
+                             const char* api_key,
+                             ai_response_t* response,
+                             int timeout_seconds);
+
+/* Classify using OpenRouter API */
+isae_error_t openrouter_classify(const announcement_t* ann,
+                                 const char* api_key,
+                                 ai_response_t* response,
+                                 int timeout_seconds);
 
 #endif /* ISAE_MONITOR_PROVIDERS_H */

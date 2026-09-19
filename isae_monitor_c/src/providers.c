@@ -1,345 +1,303 @@
 /**
- * @file providers.c
- * @brief AI provider implementations (Gemini, OpenRouter)
+ * ISAE Monitor - AI Providers Implementation
  * 
- * Python equivalent: requests library calls to AI APIs
- * C Implementation: libcurl HTTP client with JSON parsing
+ * Maps Python: providers.py -> C: providers.c
+ * 
+ * Implements Google Gemini and OpenRouter API calls for classification.
  */
 
 #include "isae_monitor/providers.h"
 #include "isae_monitor/httpclient.h"
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <ctype.h>
+#include <cjson/cJSON.h>
 
-/* Maximum response size for AI API calls */
-#define MAX_AI_RESPONSE_SIZE (64 * 1024)
-
-/* Trim whitespace from string */
-static char* trim_whitespace(char* str) {
-    if (!str) return NULL;
+void ai_response_init(ai_response_t* resp) {
+    if (!resp) return;
     
-    while (isspace((unsigned char)*str)) str++;
-    
-    if (*str == 0) return str;
-    
-    char* end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end)) end--;
-    
-    end[1] = '\0';
-    return str;
+    resp->category[0] = '\0';
+    resp->confidence = 0;
+    resp->raw_response[0] = '\0';
+    resp->success = false;
 }
 
-/* Extract classification from JSON response - simple parser */
-static isae_error_t extract_classification_json(const char* json, char* department_out, size_t out_size) {
-    if (!json || !department_out || out_size == 0) return ISAE_ERR_INVALID_PARAM;
+void ai_response_cleanup(ai_response_t* resp) {
+    /* Nothing to free - fixed size arrays */
+    (void)resp;
+}
+
+/**
+ * Parse category from AI response text.
+ * Expected format: "CATEGORY: <name>" or just the category name.
+ */
+static isae_error_t parse_ai_category(const char* response_text, 
+                                      char* category_out, size_t category_size,
+                                      int* confidence_out) {
+    if (!response_text || !category_out) {
+        return ISAE_ERR_INVALID_PARAM;
+    }
     
-    /* Look for "department" or "classification" key */
-    const char* keys[] = {"department", "classification", "result", NULL};
-    const char* found_value = NULL;
+    /* Default values */
+    strncpy(category_out, "GENERAL", category_size - 1);
+    category_out[category_size - 1] = '\0';
+    *confidence_out = 50;
     
-    for (int i = 0; keys[i] != NULL; i++) {
-        char search_pattern[64];
-        snprintf(search_pattern, sizeof(search_pattern), "\"%s\"", keys[i]);
-        
-        const char* key_pos = strstr(json, search_pattern);
-        if (key_pos) {
-            /* Find colon after key */
-            const char* colon = strchr(key_pos, ':');
-            if (colon) {
-                /* Skip whitespace */
-                const char* value_start = colon + 1;
-                while (*value_start && isspace((unsigned char)*value_start)) value_start++;
-                
-                if (*value_start == '"') {
-                    /* String value */
-                    value_start++;
-                    const char* value_end = value_start;
-                    while (*value_end && *value_end != '"') value_end++;
-                    
-                    size_t value_len = value_end - value_start;
-                    if (value_len < out_size && value_len > 0) {
-                        strncpy(department_out, value_start, value_len);
-                        department_out[value_len] = '\0';
-                        found_value = department_out;
-                        break;
-                    }
-                } else {
-                    /* Non-string value - skip */
-                    continue;
-                }
+    /* Look for common category names in response */
+    const char* categories[] = {
+        "JOBS", "EVENTS", "COURSES", "RESEARCH", "ADMIN",
+        "EMPLOI", "STAGE", "CONFERENCE", "SEMINAR",
+        NULL
+    };
+    
+    /* Convert response to uppercase for matching */
+    char upper_resp[1024];
+    size_t len = strlen(response_text);
+    if (len >= sizeof(upper_resp)) {
+        len = sizeof(upper_resp) - 1;
+    }
+    
+    for (size_t i = 0; i < len; i++) {
+        upper_resp[i] = (char)toupper((unsigned char)response_text[i]);
+    }
+    upper_resp[len] = '\0';
+    
+    /* Search for category keywords */
+    for (int i = 0; categories[i] != NULL; i++) {
+        if (strstr(upper_resp, categories[i]) != NULL) {
+            /* Map French categories to English equivalents */
+            if (strcmp(categories[i], "EMPLOI") == 0 || 
+                strcmp(categories[i], "STAGE") == 0) {
+                strncpy(category_out, "JOBS", category_size - 1);
+            } else if (strcmp(categories[i], "CONFERENCE") == 0 ||
+                       strcmp(categories[i], "SEMINAR") == 0) {
+                strncpy(category_out, "EVENTS", category_size - 1);
+            } else {
+                strncpy(category_out, categories[i], category_size - 1);
             }
+            category_out[category_size - 1] = '\0';
+            *confidence_out = 80;
+            return ISAE_OK;
         }
     }
     
-    if (!found_value) {
-        /* Try to find any quoted string that looks like a department name */
-        const char* quote = strchr(json, '"');
-        while (quote) {
-            quote++;
-            const char* end_quote = strchr(quote, '"');
-            if (end_quote) {
-                size_t len = end_quote - quote;
-                if (len > 2 && len < out_size) {
-                    /* Check if it looks like a department name */
-                    strncpy(department_out, quote, len);
-                    department_out[len] = '\0';
-                    
-                    /* Basic validation: contains letters, reasonable length */
-                    if (strlen(department_out) >= 3 && strlen(department_out) <= 50) {
-                        return ISAE_OK;
-                    }
-                }
-                quote = end_quote + 1;
-            } else {
-                break;
-            }
+    /* Try to extract first word that looks like a category */
+    const char* p = response_text;
+    while (*p && *p != ':' && *p != '\n') {
+        p++;
+    }
+    
+    if (*p == ':') {
+        p++;
+        while (*p && (*p == ' ' || *p == '\t')) {
+            p++;
         }
-        return ISAE_ERR_PARSE;
+        
+        /* Extract word */
+        char word[64];
+        size_t wi = 0;
+        while (*p && *p != ' ' && *p != '\n' && wi < sizeof(word) - 1) {
+            word[wi++] = (char)toupper((unsigned char)*p++);
+        }
+        word[wi] = '\0';
+        
+        if (wi > 0) {
+            strncpy(category_out, word, category_size - 1);
+            category_out[category_size - 1] = '\0';
+            *confidence_out = 70;
+        }
     }
     
     return ISAE_OK;
 }
 
-isae_error_t ai_classify_gemini(const char* api_key, const char* title, 
-                                const char* summary, char* department_out, size_t out_size) {
-    if (!api_key || !title || !department_out || out_size == 0) {
+isae_error_t gemini_classify(const announcement_t* ann,
+                             const char* api_key,
+                             ai_response_t* response,
+                             int timeout_seconds) {
+    if (!ann || !api_key || !response) {
         return ISAE_ERR_INVALID_PARAM;
     }
     
-    isae_error_t ret = ISAE_OK;
-    char* url = NULL;
-    char* payload = NULL;
-    HttpResponse response = {0};
+    ai_response_init(response);
     
-    /* Build combined text */
-    char combined_text[2048];
-    snprintf(combined_text, sizeof(combined_text), 
-             "Title: %s\nSummary: %s",
-             title ? title : "",
-             summary ? summary : "");
+    /* Build prompt */
+    char prompt[2048];
+    snprintf(prompt, sizeof(prompt),
+             "Classify this school announcement into one of these categories: "
+             "JOBS, EVENTS, COURSES, RESEARCH, ADMIN, GENERAL. "
+             "Respond with ONLY the category name.\n\n"
+             "Title: %s\n"
+             "Summary: %s\n"
+             "Department: %s\n\n"
+             "Category:",
+             ann->title ? ann->title : "",
+             ann->summary ? ann->summary : "",
+             ann->department_key ? ann->department_key : "");
+    
+    /* Build JSON request */
+    cJSON* root = cJSON_CreateObject();
+    cJSON* contents = cJSON_CreateArray();
+    cJSON* part = cJSON_CreateObject();
+    cJSON_AddItemToObject(part, "text", cJSON_CreateString(prompt));
+    cJSON_AddItemToArray(contents, part);
+    cJSON* content_obj = cJSON_CreateObject();
+    cJSON_AddItemToObject(content_obj, "parts", contents);
+    cJSON* contents_arr = cJSON_CreateArray();
+    cJSON_AddItemToArray(contents_arr, content_obj);
+    cJSON_AddItemToObject(root, "contents", contents_arr);
+    
+    char* json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    
+    if (!json_str) {
+        return ISAE_ERR_MEMORY;
+    }
     
     /* Build URL */
-    url = malloc(512);
-    if (!url) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
-    snprintf(url, 512, 
-             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=%s",
+    char url[512];
+    snprintf(url, sizeof(url),
+             "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s",
              api_key);
     
-    /* Build JSON payload */
-    /* Escape text for JSON */
-    size_t text_len = strlen(combined_text);
-    size_t escaped_size = text_len * 2 + 256;
-    payload = malloc(escaped_size);
-    if (!payload) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
+    /* Make request */
+    http_response_t http_resp;
+    http_response_init(&http_resp);
     
-    /* Simple JSON escaping */
-    char* escaped_text = malloc(text_len * 2 + 1);
-    if (!escaped_text) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
+    http_client_config_t config;
+    http_client_config_default(&config);
+    config.timeout_seconds = timeout_seconds;
     
-    size_t j = 0;
-    for (size_t i = 0; i < text_len && j < text_len * 2 - 1; i++) {
-        char c = combined_text[i];
-        if (c == '"' || c == '\\') {
-            escaped_text[j++] = '\\';
-        }
-        escaped_text[j++] = c;
-    }
-    escaped_text[j] = '\0';
+    isae_error_t err = http_post_json(url, json_str, &http_resp, &config, NULL);
+    free(json_str);
     
-    snprintf(payload, escaped_size,
-             "{\"contents\":[{\"parts\":[{\"text\":\"Classify this academic announcement into exactly ONE of these departments: Informatique, Mathematiques, Physique, Chimie, Biologie, Sciences de l'Ingenieur, Sciences Economiques et de Gestion, Langues Etrangeres, Sport, Autre.\\n\\n%s\\n\\nRespond with ONLY the exact department name from the list above.\"}]}],\"generationConfig\":{\"temperature\":0.1,\"maxOutputTokens\":50}}",
-             escaped_text);
-    
-    free(escaped_text);
-    
-    /* Set headers */
-    const char* headers[] = {
-        "Content-Type: application/json",
-        NULL
-    };
-    
-    /* Make HTTP POST request */
-    ret = http_post(url, payload, strlen(payload), headers, &response, 30);
-    if (ret != ISAE_OK) {
-        goto cleanup;
-    }
-    
-    /* Ensure null termination */
-    if (response.body && response.body_size > 0) {
-        if (response.body[response.body_size - 1] != '\0') {
-            char* new_body = realloc(response.body, response.body_size + 1);
-            if (new_body) {
-                response.body = new_body;
-                response.body[response.body_size] = '\0';
-            }
-        }
+    if (err != ISAE_OK) {
+        http_response_cleanup(&http_resp);
+        return err;
     }
     
     /* Parse response */
-    if (!response.body || response.body_size == 0) {
-        ret = ISAE_ERR_PARSE;
-        goto cleanup;
+    if (http_resp.body) {
+        strncpy(response->raw_response, http_resp.body, sizeof(response->raw_response) - 1);
+        
+        cJSON* resp_json = cJSON_Parse(http_resp.body);
+        if (resp_json) {
+            cJSON* candidates = cJSON_GetObjectItem(resp_json, "candidates");
+            if (candidates && cJSON_IsArray(candidates) && 
+                cJSON_GetArraySize(candidates) > 0) {
+                cJSON* first = cJSON_GetArrayItem(candidates, 0);
+                cJSON* content = cJSON_GetObjectItem(first, "content");
+                if (content) {
+                    cJSON* parts = cJSON_GetObjectItem(content, "parts");
+                    if (parts && cJSON_IsArray(parts) && cJSON_GetArraySize(parts) > 0) {
+                        cJSON* text_item = cJSON_GetArrayItem(parts, 0);
+                        cJSON* text = cJSON_GetObjectItem(text_item, "text");
+                        if (text && cJSON_IsString(text)) {
+                            parse_ai_category(text->valuestring, 
+                                             response->category, sizeof(response->category),
+                                             &response->confidence);
+                            response->success = true;
+                        }
+                    }
+                }
+            }
+            cJSON_Delete(resp_json);
+        }
     }
     
-    ret = extract_classification_json(response.body, department_out, out_size);
+    http_response_cleanup(&http_resp);
     
-cleanup:
-    free(url);
-    free(payload);
-    http_response_free(&response);
-    return ret;
+    return response->success ? ISAE_OK : ISAE_ERR_CLASSIFICATION;
 }
 
-isae_error_t ai_classify_openrouter(const char* api_key, const char* title,
-                                    const char* summary, char* department_out, size_t out_size) {
-    if (!api_key || !title || !department_out || out_size == 0) {
+isae_error_t openrouter_classify(const announcement_t* ann,
+                                 const char* api_key,
+                                 ai_response_t* response,
+                                 int timeout_seconds) {
+    if (!ann || !api_key || !response) {
         return ISAE_ERR_INVALID_PARAM;
     }
     
-    isae_error_t ret = ISAE_OK;
-    char* url = NULL;
-    char* payload = NULL;
-    HttpResponse response = {0};
+    ai_response_init(response);
     
-    /* Build combined text */
-    char combined_text[2048];
-    snprintf(combined_text, sizeof(combined_text), 
-             "Title: %s\nSummary: %s",
-             title ? title : "",
-             summary ? summary : "");
+    /* Build prompt */
+    char system_prompt[] = "You are a classification assistant. Classify school announcements into: JOBS, EVENTS, COURSES, RESEARCH, ADMIN, or GENERAL. Respond with ONLY the category name.";
+    char user_prompt[1024];
+    snprintf(user_prompt, sizeof(user_prompt),
+             "Title: %s\nSummary: %s\nDepartment: %s",
+             ann->title ? ann->title : "",
+             ann->summary ? ann->summary : "",
+             ann->department_key ? ann->department_key : "");
     
-    /* Build URL */
-    url = strdup("https://openrouter.ai/api/v1/chat/completions");
-    if (!url) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
+    /* Build JSON request */
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "model", "meta-llama/llama-3-8b-instruct");
+    
+    cJSON* messages = cJSON_CreateArray();
+    
+    cJSON* sys_msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(sys_msg, "role", "system");
+    cJSON_AddStringToObject(sys_msg, "content", system_prompt);
+    cJSON_AddItemToArray(messages, sys_msg);
+    
+    cJSON* user_msg = cJSON_CreateObject();
+    cJSON_AddStringToObject(user_msg, "role", "user");
+    cJSON_AddStringToObject(user_msg, "content", user_prompt);
+    cJSON_AddItemToArray(messages, user_msg);
+    
+    cJSON_AddItemToObject(root, "messages", messages);
+    cJSON_AddNumberToObject(root, "max_tokens", 20);
+    cJSON_AddNumberToObject(root, "temperature", 0.1);
+    
+    char* json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    
+    if (!json_str) {
+        return ISAE_ERR_MEMORY;
     }
     
-    /* Build JSON payload */
-    size_t text_len = strlen(combined_text);
-    size_t escaped_size = text_len * 2 + 512;
-    payload = malloc(escaped_size);
-    if (!payload) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
+    /* Make request */
+    http_response_t http_resp;
+    http_response_init(&http_resp);
     
-    /* Simple JSON escaping */
-    char* escaped_text = malloc(text_len * 2 + 1);
-    if (!escaped_text) {
-        ret = ISAE_ERR_MEMORY;
-        goto cleanup;
-    }
+    http_client_config_t config;
+    http_client_config_default(&config);
+    config.timeout_seconds = timeout_seconds;
     
-    size_t j = 0;
-    for (size_t i = 0; i < text_len && j < text_len * 2 - 1; i++) {
-        char c = combined_text[i];
-        if (c == '"' || c == '\\' || c == '\n') {
-            escaped_text[j++] = '\\';
-            if (c == '\n') {
-                escaped_text[j++] = 'n';
-            } else {
-                escaped_text[j++] = c;
-                continue;
-            }
-        }
-        escaped_text[j++] = c;
-    }
-    escaped_text[j] = '\0';
-    
-    snprintf(payload, escaped_size,
-             "{\"model\":\"meta-llama/llama-3-8b-instruct\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a classification assistant for academic announcements. Respond with ONLY the exact department name from this list: Informatique, Mathematiques, Physique, Chimie, Biologie, Sciences de l'Ingenieur, Sciences Economiques et de Gestion, Langues Etrangeres, Sport, Autre.\"},{\"role\":\"user\",\"content\":\"%s\\n\\nDepartment:\"}],\"max_tokens\":50,\"temperature\":0.1}",
-             escaped_text);
-    
-    free(escaped_text);
-    
-    /* Set headers */
-    const char* headers_arr[4];
-    char auth_header[256];
+    char auth_header[512];
     snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", api_key);
     
-    headers_arr[0] = "Content-Type: application/json";
-    headers_arr[1] = auth_header;
-    headers_arr[2] = "HTTP-Referer: https://isae-monitor.local";
-    headers_arr[3] = NULL;
+    isae_error_t err = http_post_json("https://openrouter.ai/api/v1/chat/completions",
+                                       json_str, &http_resp, &config, auth_header);
+    free(json_str);
     
-    /* Make HTTP POST request */
-    ret = http_post(url, payload, strlen(payload), headers_arr, &response, 30);
-    if (ret != ISAE_OK) {
-        goto cleanup;
+    if (err != ISAE_OK) {
+        http_response_cleanup(&http_resp);
+        return err;
     }
     
-    /* Ensure null termination */
-    if (response.body && response.body_size > 0) {
-        if (response.body[response.body_size - 1] != '\0') {
-            char* new_body = realloc(response.body, response.body_size + 1);
-            if (new_body) {
-                response.body = new_body;
-                response.body[response.body_size] = '\0';
+    /* Parse response */
+    if (http_resp.body) {
+        strncpy(response->raw_response, http_resp.body, sizeof(response->raw_response) - 1);
+        
+        cJSON* resp_json = cJSON_Parse(http_resp.body);
+        if (resp_json) {
+            cJSON* choices = cJSON_GetObjectItem(resp_json, "choices");
+            if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
+                cJSON* first = cJSON_GetArrayItem(choices, 0);
+                cJSON* message = cJSON_GetObjectItem(first, "message");
+                if (message) {
+                    cJSON* content = cJSON_GetObjectItem(message, "content");
+                    if (content && cJSON_IsString(content)) {
+                        parse_ai_category(content->valuestring,
+                                         response->category, sizeof(response->category),
+                                         &response->confidence);
+                        response->success = true;
+                    }
+                }
             }
+            cJSON_Delete(resp_json);
         }
     }
     
-    /* Parse response - look for content in choices array */
-    if (!response.body || response.body_size == 0) {
-        ret = ISAE_ERR_PARSE;
-        goto cleanup;
-    }
+    http_response_cleanup(&http_resp);
     
-    /* Look for "content" field in response */
-    const char* content_marker = strstr(response.body, "\"content\"");
-    if (content_marker) {
-        const char* colon = strchr(content_marker, ':');
-        if (colon) {
-            const char* value_start = colon + 1;
-            while (*value_start && isspace((unsigned char)*value_start)) value_start++;
-            
-            if (*value_start == '"') {
-                value_start++;
-                const char* value_end = value_start;
-                while (*value_end && *value_end != '"') {
-                    if (*value_end == '\\' && *(value_end + 1)) {
-                        value_end += 2;
-                    } else {
-                        value_end++;
-                    }
-                }
-                
-                size_t value_len = value_end - value_start;
-                if (value_len > 0 && value_len < out_size) {
-                    strncpy(department_out, value_start, value_len);
-                    department_out[value_len] = '\0';
-                    
-                    /* Trim whitespace */
-                    char* trimmed = trim_whitespace(department_out);
-                    if (trimmed != department_out) {
-                        memmove(department_out, trimmed, strlen(trimmed) + 1);
-                    }
-                    
-                    ret = ISAE_OK;
-                    goto cleanup;
-                }
-            }
-        }
-    }
-    
-    /* Fallback to generic extraction */
-    ret = extract_classification_json(response.body, department_out, out_size);
-    
-cleanup:
-    free(url);
-    free(payload);
-    http_response_free(&response);
-    return ret;
+    return response->success ? ISAE_OK : ISAE_ERR_CLASSIFICATION;
 }

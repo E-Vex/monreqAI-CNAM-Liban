@@ -1,31 +1,27 @@
-/**
- * @file feed.h
- * @brief Atom feed fetching and parsing
- */
-
 #ifndef ISAE_MONITOR_FEED_H
 #define ISAE_MONITOR_FEED_H
 
 #include "common.h"
 #include "models.h"
-#include "config.h"
 
-/* Feed error codes */
-typedef enum {
-    FEED_OK = 0,
-    FEED_ERR_HTTP = -1,
-    FEED_ERR_PARSE = -2,
-    FEED_ERR_EMPTY = -3
-} feed_error_t;
+/* Maximum announcements per feed */
+#define MAX_ANNOUNCEMENTS_PER_FEED 50
 
-/* Maximum number of announcements to fetch */
-#define MAX_ANNOUNCEMENTS 50
-
-/* Feed result structure */
+/* Feed entry (parsed from RSS/Atom) */
 typedef struct {
-    announcement_t* announcements;
+    char title[MAX_TITLE_LEN];
+    char summary[MAX_SUMMARY_LEN];
+    char url[MAX_URL_LEN];
+    char published[MAX_PUBLISHED_DATE];
+    char author[256];
+} feed_entry_t;
+
+/* Parsed feed result */
+typedef struct {
+    feed_entry_t* entries;
     size_t count;
-    size_t capacity;
+    char feed_title[256];
+    char feed_url[MAX_URL_LEN];
 } feed_result_t;
 
 /* Initialize feed result */
@@ -34,10 +30,12 @@ void feed_result_init(feed_result_t* result);
 /* Free feed result resources */
 void feed_result_cleanup(feed_result_t* result);
 
-/* Fetch and parse the announcements feed */
-feed_error_t feed_fetch(const settings_t* settings, feed_result_t* result);
+/* Fetch and parse feed from URL */
+isae_error_t feed_fetch(const char* feed_url, feed_result_t* result, 
+                        int timeout_seconds);
 
-/* Get error message for feed error */
-const char* feed_error_string(feed_error_t error);
+/* Parse Atom/RSS XML content */
+isae_error_t feed_parse_xml(const char* xml_content, size_t xml_size,
+                            feed_result_t* result);
 
 #endif /* ISAE_MONITOR_FEED_H */
