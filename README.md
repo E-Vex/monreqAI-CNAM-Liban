@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.svg" alt="monreqAI — ISAE Announcements Monitor" width="680"/>
+  <img src="logo.png" alt="monreqAI" width="300"/>
 </p>
 
 <br/>
