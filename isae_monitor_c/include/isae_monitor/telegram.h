@@ -1,50 +1,34 @@
-/**
- * @file telegram.h
- * @brief Telegram API client for message delivery
- */
-
 #ifndef ISAE_MONITOR_TELEGRAM_H
 #define ISAE_MONITOR_TELEGRAM_H
 
 #include "common.h"
-#include "config.h"
 #include "models.h"
 
-/* Telegram error codes */
-typedef enum {
-    TELEGRAM_OK = 0,
-    TELEGRAM_ERR_CONFIG = -1,
-    TELEGRAM_ERR_HTTP = -2,
-    TELEGRAM_ERR_API = -3,
-    TELEGRAM_ERR_LIMIT = -4
-} telegram_error_t;
-
-/* Telegram client state */
+/* Telegram message formatting */
 typedef struct {
-    const settings_t* settings;
-    bool dry_run;
-    double last_send_time;    /* Monotonic time of last send */
-} telegram_t;
+    char text[4096];
+    bool has_markdown;
+} telegram_message_t;
 
-/* Initialize Telegram client */
-isae_error_t telegram_init(telegram_t* client, 
-                            const settings_t* settings,
-                            bool dry_run);
+/* Initialize telegram message */
+void telegram_message_init(telegram_message_t* msg);
 
-/* Free Telegram client resources */
-void telegram_cleanup(telegram_t* client);
-
-/* Format announcement as Telegram message */
+/* Format announcement for Telegram */
 isae_error_t telegram_format_message(const announcement_t* ann,
-                                      const char* category,
-                                      char* message, size_t message_size);
+                                     const char* category,
+                                     telegram_message_t* msg);
 
-/* Send message to a chat */
-telegram_error_t telegram_send(telegram_t* client,
-                                const char* chat_id,
-                                const char* text);
+/* Send message to Telegram chat */
+isae_error_t telegram_send_message(const char* bot_token,
+                                   const char* chat_id,
+                                   const telegram_message_t* msg,
+                                   int timeout_seconds);
 
-/* Get error string */
-const char* telegram_error_string(telegram_error_t error);
+/* Send notification for announcement */
+isae_error_t telegram_notify(const char* bot_token,
+                             const char* chat_ids_csv,  /* Comma-separated */
+                             const announcement_t* ann,
+                             const char* category,
+                             int timeout_seconds);
 
 #endif /* ISAE_MONITOR_TELEGRAM_H */
