@@ -147,17 +147,23 @@ void pipeline_stop(pipeline_t* pipeline) {
 void pipeline_list_departments(const settings_t* settings) {
     if (!settings) return;
     printf("%zu departments at ISSAE / Cnam Liban:\n\n", departments_count());
-    size_t width = 0;
+    /* Compute column widths so the output lines up. */
+    size_t name_w = 0;
+    size_t key_w = 0;
     for (size_t i = 0; i < departments_count(); i++) {
         const department_t* d = departments_get_at(i);
         size_t n = strlen(d->name_fr);
-        if (n > width) width = n;
+        if (n > name_w) name_w = n;
+        size_t k = strlen(d->key);
+        if (k > key_w) key_w = k;
     }
     for (size_t i = 0; i < departments_count(); i++) {
         const department_t* d = departments_get_at(i);
         const char* env_name = departments_env_var(d->key);
         bool configured = settings->department_channels[i][0] != '\0';
-        printf("  %-*s  %s  %s\n", (int)width, d->name_fr,
+        printf("  %-*s  %-*s  %s  %s\n",
+               (int)name_w, d->name_fr,
+               (int)key_w, d->key,
                env_name ? env_name : "(unknown)",
                configured ? "configured" : "-");
     }
