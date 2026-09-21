@@ -124,12 +124,17 @@ static isae_error_t process_announcement(pipeline_t* pipeline,
     
     /* Send Telegram notification if configured */
     if (pipeline->settings.telegram_bot_token[0] && 
-        pipeline->settings.telegram_chat_ids[0]) {
-        err = telegram_notify(pipeline->settings.telegram_bot_token,
-                              pipeline->settings.telegram_chat_ids,
-                              &ann,
-                              classif_result.category,
-                              pipeline->settings.http_timeout);
+        pipeline->settings.telegram_channel_general[0]) {
+        
+        /* Get department-specific channel */
+        const char* dept_channel = config_get_dept_channel(&pipeline->settings, dept_key);
+        
+        err = telegram_notify_dept(pipeline->settings.telegram_bot_token,
+                                   pipeline->settings.telegram_channel_general,
+                                   dept_channel,
+                                   &ann,
+                                   classif_result.category,
+                                   pipeline->settings.http_timeout);
         if (err == ISAE_OK) {
             state_mark_notified(&pipeline->state, hash);
             printf("✓ Notified: [%s] %s\n", classif_result.category, ann.title);

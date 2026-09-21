@@ -123,12 +123,13 @@ isae_error_t telegram_send_message(const char* bot_token,
     return success ? ISAE_OK : ISAE_ERR_HTTP;
 }
 
-isae_error_t telegram_notify(const char* bot_token,
-                             const char* chat_ids_csv,
-                             const announcement_t* ann,
-                             const char* category,
-                             int timeout_seconds) {
-    if (!bot_token || !chat_ids_csv || !ann || !category) {
+isae_error_t telegram_notify_dept(const char* bot_token,
+                                  const char* general_channel,
+                                  const char* dept_channel,
+                                  const announcement_t* ann,
+                                  const char* category,
+                                  int timeout_seconds) {
+    if (!bot_token || !general_channel || !ann || !category) {
         return ISAE_ERR_INVALID_PARAM;
     }
     
@@ -139,33 +140,23 @@ isae_error_t telegram_notify(const char* bot_token,
         return err;
     }
     
-    /* Parse comma-separated chat IDs and send to each */
-    char chat_ids_copy[MAX_API_KEY_LEN * 4];
-    strncpy(chat_ids_copy, chat_ids_csv, sizeof(chat_ids_copy) - 1);
-    chat_ids_copy[sizeof(chat_ids_copy) - 1] = '\0';
-    
-    char* saveptr = NULL;
-    char* token = strtok_r(chat_ids_copy, ",", &saveptr);
-    
-    isae_error_t last_err = ISAE_OK;
-    int sent_count = 0;
-    
-    while (token) {
-        /* Trim whitespace */
-        while (*token && isspace((unsigned char)*token)) token++;
-        char* end = token + strlen(token) - 1;
-        while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
-        
-        if (*token) {
-            err = telegram_send_message(bot_token, token, &msg, timeout_seconds);
-            if (err == ISAE_OK) {
-                sent_count++;
-            }
-            last_err = err;
-        }
-        
-        token = strtok_r(NULL, ",", &saveptr);
+    /* Always send to general channel */
+    err = telegram_send_message(bot_token, general_channel, &msg, timeout_seconds);
+    if (err != ISAE_OK) {
+        fprintf(stderr, "Failed to notify general channel: %s\n", isae_strerror(err));
     }
     
-    return sent_count > 0 ? ISAE_OK : (last_err != ISAE_OK ? last_err : ISAE_ERR_INVALID_PARAM);
+    /* Send to department channel if configured (non-NULL and non-empty) */
+    if (dept_channel && dept_channel[0] != '\0') {
+        isae_error_t dept_err = telegram_send_message(bot_token, dept_channel, &msg, timeout_seconds);
+        if (dept_err == ISAE_OK) {
+            printf("  → Notified department channel\n");
+        } else {
+            fprintf(stderr, "Failed to notify department channel: %s\n", isae_strerror(dept_err));
+        }
+    } else {
+        printf("  → Department channel not configured, skipping\n");
+    }
+    
+    return err;
 }

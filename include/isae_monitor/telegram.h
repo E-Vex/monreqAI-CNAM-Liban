@@ -24,11 +24,12 @@ isae_error_t telegram_send_message(const char* bot_token,
                                    const telegram_message_t* msg,
                                    int timeout_seconds);
 
-/* Send notification for announcement */
-isae_error_t telegram_notify(const char* bot_token,
-                             const char* chat_ids_csv,  /* Comma-separated */
-                             const announcement_t* ann,
-                             const char* category,
-                             int timeout_seconds);
+/* Send notification to general channel and optionally to department channel */
+isae_error_t telegram_notify_dept(const char* bot_token,
+                                  const char* general_channel,
+                                  const char* dept_channel,  /* Can be NULL */
+                                  const announcement_t* ann,
+                                  const char* category,
+                                  int timeout_seconds);
 
 #endif /* ISAE_MONITOR_TELEGRAM_H */
