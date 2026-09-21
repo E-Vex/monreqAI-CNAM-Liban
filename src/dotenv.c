@@ -111,45 +111,60 @@ isae_error_t dotenv_load(dotenv_t* env, const char* path) {
     if (!env) {
         return ISAE_ERR_INVALID_PARAM;
     }
-    
+
     dotenv_init(env);
-    
+
     /* Default path */
     char default_path[] = ".env";
     const char* filepath = path ? path : default_path;
-    
+
     FILE* file = fopen(filepath, "r");
     if (!file) {
         /* File not found is not an error - just means no .env file */
         return ISAE_OK;
     }
-    
+
     char line[MAX_ENV_LINE_LEN];
-    isae_error_t err = ISAE_OK;
-    
+
     while (fgets(line, sizeof(line), file) && env->count < MAX_ENV_VARS) {
         /* Remove newline */
         size_t len = strlen(line);
-        if (len > 0 && line[len-1] == '\n') {
-            line[len-1] = '\0';
+        if (len > 0 && line[len - 1] == '\n') {
+            line[len - 1] = '\0';
         }
-        
+
         char key[MAX_ENV_LINE_LEN];
         char value[MAX_ENV_LINE_LEN];
-        
-        err = parse_line(line, key, sizeof(key), value, sizeof(value));
+
+        isae_error_t err = parse_line(line, key, sizeof(key), value, sizeof(value));
         if (err != ISAE_OK) {
             continue;  /* Skip invalid lines */
         }
-        
+
         /* Store the variable */
         strncpy(env->vars[env->count].key, key, MAX_ENV_LINE_LEN - 1);
+        env->vars[env->count].key[MAX_ENV_LINE_LEN - 1] = '\0';
         strncpy(env->vars[env->count].value, value, MAX_ENV_LINE_LEN - 1);
+        env->vars[env->count].value[MAX_ENV_LINE_LEN - 1] = '\0';
         env->count++;
     }
-    
+
     fclose(file);
     return ISAE_OK;
+}
+
+size_t dotenv_export_to_environ(const dotenv_t* env) {
+    if (!env) return 0;
+    size_t exported = 0;
+    for (size_t i = 0; i < env->count; i++) {
+        /* overwrite=0 -> existing env vars are not clobbered. This matches
+         * the conservative behavior of 'set -a; source .env; set +a' run
+         * in a shell where some vars were already exported. */
+        if (setenv(env->vars[i].key, env->vars[i].value, 0) == 0) {
+            exported++;
+        }
+    }
+    return exported;
 }
 
 const char* dotenv_get(const dotenv_t* env, const char* key) {

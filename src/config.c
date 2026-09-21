@@ -7,15 +7,32 @@
  */
 
 #include "isae_monitor/config.h"
+#include "isae_monitor/dotenv.h"
 #include <ctype.h>
+
+static dotenv_t g_dotenv;
+static bool g_dotenv_loaded = false;
 
 void config_init(settings_t* settings) {
     if (!settings) return;
-    
+
     memset(settings, 0, sizeof(settings_t));
-    
+
+    /* Auto-load .env from CWD once per process. The README documents
+     * this behavior; previously the dotenv module existed but was never
+     * wired in, so .env was silently ignored. Existing environment
+     * variables win (setenv overwrite=0), so explicit 'export FOO=...'
+     * still overrides anything in .env. */
+    if (!g_dotenv_loaded) {
+        dotenv_init(&g_dotenv);
+        if (dotenv_load(&g_dotenv, ".env") == ISAE_OK) {
+            (void)dotenv_export_to_environ(&g_dotenv);
+        }
+        g_dotenv_loaded = true;
+    }
+
     /* Set defaults */
-    strncpy(settings->state_file, "~/.isae_monitor_state.json", MAX_URL_LEN - 1);
+    strncpy(settings->state_file, "seen.json", MAX_URL_LEN - 1);
     settings->poll_interval = 300;  /* 5 minutes */
     settings->http_timeout = 30;
     settings->provider = PROVIDER_NONE;

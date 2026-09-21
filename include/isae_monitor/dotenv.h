@@ -22,8 +22,17 @@ typedef struct {
 /* Initialize dotenv loader */
 void dotenv_init(dotenv_t* env);
 
-/* Load .env file from path (or current directory if NULL) */
+/* Load .env file from path (or current directory if NULL).
+ * Returns ISAE_OK whether or not the file exists -- a missing .env is
+ * normal and never an error. Returns ISAE_ERR_INVALID_PARAM if env is
+ * NULL. Returns ISAE_ERR_IO only if the file exists but cannot be read. */
 isae_error_t dotenv_load(dotenv_t* env, const char* path);
+
+/* Push every loaded variable into the process environment via setenv()
+ * with overwrite=0, so existing values win (mirrors the shell convention
+ * 'set -a; source .env; set +a' run in a shell that already had the
+ * variable set). Returns the number of variables actually exported. */
+size_t dotenv_export_to_environ(const dotenv_t* env);
 
 /* Get value by key, returns NULL if not found */
 const char* dotenv_get(const dotenv_t* env, const char* key);
