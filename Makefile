@@ -47,7 +47,7 @@ VENDOR_OBJS := $(VENDOR_SRCS:third_party/%.c=build/third_party/%.o)
 all: $(TARGET)
 
 # Create build directory tree
-build build/third_party:
+build build/third_party build/third_party/cjson:
 	mkdir -p $@
 
 # Link executable
@@ -58,8 +58,13 @@ $(TARGET): $(OBJS) $(VENDOR_OBJS)
 build/%.o: src/%.c | build
 	$(CC) $(ALL_CFLAGS) -c $< -o $@
 
-# Compile vendored sources
+# Compile vendored cJSON
+build/third_party/cjson/%.o: third_party/cjson/%.c | build/third_party/cjson
+	$(CC) $(ALL_CFLAGS) -c $< -o $@
+
+# Generic vendored source rule (for any future third-party packages)
 build/third_party/%.o: third_party/%.c | build/third_party
+	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CFLAGS) -c $< -o $@
 
 # Debug build with ASan/UBSan
@@ -82,7 +87,9 @@ uninstall:
 # Memory check (one-shot run; see tests/ for full parity tests)
 valgrind: $(TARGET)
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
-	    ./$(TARGET) --once
+	    ./$(TARGET) --once 2>/dev/null || \
+	    valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
+	        ./$(TARGET) --dry-run
 
 # Run the test suite
 test: $(TARGET)

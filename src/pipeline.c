@@ -1,232 +1,353 @@
 /**
- * ISAE Monitor - Pipeline Implementation
- * 
- * Maps Python: pipeline.py -> C: pipeline.c
- * 
- * Main orchestration: fetches feeds, classifies announcements, sends notifications.
+ * ISAE Monitor - Pipeline
+ *
+ * Faithful C port of Python isae_monitor/pipeline.py.
+ *
+ * One-shot semantics: this is a cron-driven tool, NOT a daemon.
+ *
+ * Per-run flow:
+ *   1. Fetch the Atom feed (single URL).
+ *   2. Diff against seen.json: find entries where needs_general OR
+ *      needs_classification is true.
+ *   3. For each pending entry (in feed order, which is oldest-first
+ *      because feed_fetch reversed it):
+ *      a. If needs_general AND general_channel is set, send to general.
+ *         On success: state.mark_general_sent(id).
+ *         On failure: record error; g stays false (retries next run).
+ *      b. If needs_classification: classify (always succeeds; keyword
+ *         fallback). Route to the department channel if configured.
+ *         On successful dept delivery: state.mark_classified(id, cat).
+ *         On failure: c stays NULL (re-classify next run).
+ *      c. state.save() -- persisted after every announcement so SIGKILL
+ *         loses at most one item's progress.
+ *   4. After the loop, surface classifier dead-key notes into the report.
  */
 
 #include "isae_monitor/pipeline.h"
 #include "isae_monitor/departments.h"
 #include "isae_monitor/feed.h"
-#include "isae_monitor/telegram.h"
-#include <unistd.h>
+#include "isae_monitor/models.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+/* ------------------------------------------------------------------ */
+/* Report                                                              */
+/* ------------------------------------------------------------------ */
+
+void pipeline_report_init(pipeline_report_t* r) {
+    if (!r) return;
+    memset(r, 0, sizeof(*r));
+}
+
+void pipeline_report_add_error(pipeline_report_t* r, const char* msg) {
+    if (!r || !msg) return;
+    if (r->error_count >= (int)(sizeof(r->errors) / sizeof(r->errors[0]))) return;
+    strncpy(r->errors[r->error_count], msg, sizeof(r->errors[0]) - 1);
+    r->errors[r->error_count][sizeof(r->errors[0]) - 1] = '\0';
+    r->error_count++;
+}
+
+void pipeline_report_add_classified(pipeline_report_t* r, const char* category) {
+    if (!r || !category) return;
+    for (int i = 0; i < r->category_count; i++) {
+        if (strcmp(r->categories_seen[i], category) == 0) {
+            r->categories_count[i]++;
+            return;
+        }
+    }
+    if (r->category_count >= (int)(sizeof(r->categories_seen) / sizeof(r->categories_seen[0]))) return;
+    strncpy(r->categories_seen[r->category_count], category, sizeof(r->categories_seen[0]) - 1);
+    r->categories_seen[r->category_count][sizeof(r->categories_seen[0]) - 1] = '\0';
+    r->categories_count[r->category_count] = 1;
+    r->category_count++;
+}
+
+char* pipeline_report_render(const pipeline_report_t* r) {
+    if (!r) return NULL;
+    /* Allocate generously. */
+    char* buf = (char*)malloc(2048);
+    if (!buf) return NULL;
+    int w = 0;
+    w += snprintf(buf + w, 2048 - w, "Run summary:\n");
+    w += snprintf(buf + w, 2048 - w, "  fetched        : %zu\n", r->fetched);
+    w += snprintf(buf + w, 2048 - w, "  pending        : %zu\n", r->pending);
+    w += snprintf(buf + w, 2048 - w, "  general_sent   : %zu\n", r->general_sent);
+    w += snprintf(buf + w, 2048 - w, "  department_sent: %zu\n", r->department_sent);
+    w += snprintf(buf + w, 2048 - w, "  fallback_used  : %zu\n", r->fallback_used);
+    if (r->category_count > 0) {
+        w += snprintf(buf + w, 2048 - w, "  classified     :\n");
+        for (int i = 0; i < r->category_count; i++) {
+            w += snprintf(buf + w, 2048 - w, "    %-20s : %d\n", r->categories_seen[i], r->categories_count[i]);
+        }
+    }
+    if (r->error_count > 0) {
+        w += snprintf(buf + w, 2048 - w, "  errors (%d)     :\n", r->error_count);
+        for (int i = 0; i < r->error_count; i++) {
+            w += snprintf(buf + w, 2048 - w, "    %s\n", r->errors[i]);
+        }
+    }
+    return buf;
+}
+
+/* ------------------------------------------------------------------ */
+/* Lifecycle                                                           */
+/* ------------------------------------------------------------------ */
 
 isae_error_t pipeline_init(pipeline_t* pipeline) {
-    if (!pipeline) {
-        return ISAE_ERR_INVALID_PARAM;
-    }
-    
-    memset(pipeline, 0, sizeof(pipeline_t));
-    pipeline->running = false;
-    
-    /* Load configuration */
+    if (!pipeline) return ISAE_ERR_INVALID_PARAM;
+    memset(pipeline, 0, sizeof(*pipeline));
+
+    departments_init();
+
     config_init(&pipeline->settings);
     isae_error_t err = config_load(&pipeline->settings);
-    if (err != ISAE_OK) {
-        fprintf(stderr, "Warning: Configuration load had issues\n");
-    }
-    
-    config_validate(&pipeline->settings);
-    
-    /* Initialize state */
-    err = state_init(&pipeline->state, pipeline->settings.state_file);
-    if (err != ISAE_OK) {
-        fprintf(stderr, "Error: Failed to initialize state manager\n");
-        return err;
-    }
-    
+    if (err != ISAE_OK) return err;
+
+    err = state_init(&pipeline->state, pipeline->settings.state_file, pipeline->settings.state_history);
+    if (err != ISAE_OK) return err;
     err = state_load(&pipeline->state);
-    if (err != ISAE_OK) {
-        fprintf(stderr, "Warning: Failed to load state, starting fresh\n");
-    }
-    
-    /* Initialize classifier */
+    if (err != ISAE_OK) return err;
+
     classifier_init(&pipeline->classifier, &pipeline->settings);
-    
-    /* Initialize departments */
-    departments_init();
-    
-    pipeline->running = true;
-    
+
+    http_client_config_t http_cfg;
+    http_client_config_default(&http_cfg);
+    http_cfg.timeout_seconds = pipeline->settings.request_timeout;
+    http_cfg.max_retries = pipeline->settings.max_retries;
+
+    telegram_client_init(&pipeline->telegram,
+                         pipeline->settings.telegram_bot_token,
+                         &http_cfg,
+                         pipeline->settings.send_interval,
+                         pipeline->settings.dry_run);
     return ISAE_OK;
 }
 
 void pipeline_cleanup(pipeline_t* pipeline) {
     if (!pipeline) return;
-    
+    /* Best-effort save on exit (matches Python's __exit__ swallowing OSError). */
+    (void)state_save(&pipeline->state);
     classifier_cleanup(&pipeline->classifier);
+    telegram_client_cleanup(&pipeline->telegram);
     state_cleanup(&pipeline->state);
-    pipeline->running = false;
-}
-
-static isae_error_t process_announcement(pipeline_t* pipeline,
-                                          const feed_entry_t* entry,
-                                          const char* dept_key) {
-    if (!pipeline || !entry || !dept_key) {
-        return ISAE_ERR_INVALID_PARAM;
-    }
-    
-    /* Create announcement from feed entry */
-    announcement_t ann;
-    announcement_init(&ann);
-    
-    ann.title = strdup(entry->title);
-    ann.summary = strdup(entry->summary);
-    ann.url = strdup(entry->url);
-    ann.published = strdup(entry->published);
-    ann.department_key = strdup(dept_key);
-    
-    if (!ann.title || !ann.url) {
-        announcement_cleanup(&ann);
-        return ISAE_ERR_MEMORY;
-    }
-    
-    /* Normalize text for classification */
-    char combined[MAX_TEXT_NORMALIZED_LEN];
-    snprintf(combined, sizeof(combined), "%s %s",
-             ann.title ? ann.title : "",
-             ann.summary ? ann.summary : "");
-    
-    ann.normalized_text = malloc(MAX_TEXT_NORMALIZED_LEN);
-    if (ann.normalized_text) {
-        normalize_text(combined, ann.normalized_text, MAX_TEXT_NORMALIZED_LEN);
-    }
-    
-    /* Generate hash for deduplication */
-    char hash[MAX_HASH_LEN];
-    isae_error_t err = announcement_hash(&ann, hash, sizeof(hash));
-    if (err != ISAE_OK) {
-        announcement_cleanup(&ann);
-        return err;
-    }
-    
-    /* Check if already processed */
-    if (state_contains(&pipeline->state, hash)) {
-        announcement_cleanup(&ann);
-        return ISAE_OK;  /* Already processed */
-    }
-    
-    /* Classify announcement */
-    classification_result_t classif_result;
-    err = classifier_classify(&pipeline->classifier, &ann, &classif_result);
-    if (err != ISAE_OK) {
-        fprintf(stderr, "Classification failed: %s\n", isae_strerror(err));
-        /* Continue with default category */
-        strncpy(classif_result.category, "GENERAL", MAX_CATEGORY_NAME - 1);
-    }
-    
-    /* Add to state */
-    err = state_add(&pipeline->state, hash, dept_key, classif_result.category);
-    if (err != ISAE_OK) {
-        fprintf(stderr, "Failed to add to state: %s\n", isae_strerror(err));
-    }
-    
-    /* Send Telegram notification if configured */
-    if (pipeline->settings.telegram_bot_token[0] && 
-        pipeline->settings.telegram_channel_general[0]) {
-        
-        /* Get department-specific channel */
-        const char* dept_channel = config_get_dept_channel(&pipeline->settings, dept_key);
-        
-        err = telegram_notify_dept(pipeline->settings.telegram_bot_token,
-                                   pipeline->settings.telegram_channel_general,
-                                   dept_channel,
-                                   &ann,
-                                   classif_result.category,
-                                   pipeline->settings.http_timeout);
-        if (err == ISAE_OK) {
-            state_mark_notified(&pipeline->state, hash);
-            printf("✓ Notified: [%s] %s\n", classif_result.category, ann.title);
-        } else {
-            fprintf(stderr, "Telegram notification failed: %s\n", isae_strerror(err));
-        }
-    } else {
-        printf("✓ New: [%s] %s (%s)\n", classif_result.category, ann.title, dept_key);
-    }
-    
-    classification_result_cleanup(&classif_result);
-    announcement_cleanup(&ann);
-    
-    return ISAE_OK;
-}
-
-isae_error_t pipeline_run_once(pipeline_t* pipeline) {
-    if (!pipeline) {
-        return ISAE_ERR_INVALID_PARAM;
-    }
-    
-    printf("Fetching feeds from %zu departments...\n", departments_count());
-    
-    int total_new = 0;
-    
-    /* Iterate through all departments */
-    for (size_t i = 0; i < departments_count(); i++) {
-        const department_t* dept = departments_get_at(i);
-        if (!dept) continue;
-        
-        printf("  Fetching %s (%s)...\n", dept->name, dept->key);
-        
-        /* Fetch and parse feed */
-        feed_result_t feed;
-        isae_error_t err = feed_fetch(dept->feed_url, &feed, pipeline->settings.http_timeout);
-        if (err != ISAE_OK) {
-            fprintf(stderr, "  Failed to fetch %s: %s\n", dept->key, isae_strerror(err));
-            continue;
-        }
-        
-        printf("  Found %zu entries\n", feed.count);
-        
-        /* Process each entry */
-        for (size_t j = 0; j < feed.count; j++) {
-            err = process_announcement(pipeline, &feed.entries[j], dept->key);
-            if (err == ISAE_OK) {
-                total_new++;
-            }
-        }
-        
-        feed_result_cleanup(&feed);
-    }
-    
-    /* Save state */
-    isae_error_t err = state_save(&pipeline->state);
-    if (err != ISAE_OK) {
-        fprintf(stderr, "Failed to save state: %s\n", isae_strerror(err));
-    }
-    
-    printf("Processed %d announcements\n", total_new);
-    
-    return ISAE_OK;
-}
-
-isae_error_t pipeline_run(pipeline_t* pipeline, int interval_seconds) {
-    if (!pipeline) {
-        return ISAE_ERR_INVALID_PARAM;
-    }
-    
-    printf("Starting continuous monitoring (interval: %ds)...\n", interval_seconds);
-    printf("Press Ctrl+C to stop.\n\n");
-    
-    pipeline->running = true;
-    
-    while (pipeline->running) {
-        isae_error_t err = pipeline_run_once(pipeline);
-        if (err != ISAE_OK) {
-            fprintf(stderr, "Pipeline iteration failed: %s\n", isae_strerror(err));
-        }
-        
-        /* Sleep in small increments to allow signal handling */
-        for (int i = 0; i < interval_seconds && pipeline->running; i++) {
-            sleep(1);
-        }
-    }
-    
-    printf("\nShutting down...\n");
-    return ISAE_OK;
 }
 
 void pipeline_stop(pipeline_t* pipeline) {
     if (!pipeline) return;
-    
-    pipeline->running = false;
+    pipeline->interrupted = 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* List departments (--list-departments)                              */
+/* ------------------------------------------------------------------ */
+
+void pipeline_list_departments(const settings_t* settings) {
+    if (!settings) return;
+    printf("%zu departments at ISSAE / Cnam Liban:\n\n", departments_count());
+    size_t width = 0;
+    for (size_t i = 0; i < departments_count(); i++) {
+        const department_t* d = departments_get_at(i);
+        size_t n = strlen(d->name_fr);
+        if (n > width) width = n;
+    }
+    for (size_t i = 0; i < departments_count(); i++) {
+        const department_t* d = departments_get_at(i);
+        const char* env_name = departments_env_var(d->key);
+        bool configured = settings->department_channels[i][0] != '\0';
+        printf("  %-*s  %s  %s\n", (int)width, d->name_fr,
+               env_name ? env_name : "(unknown)",
+               configured ? "configured" : "-");
+    }
+    printf("\n  plus the pseudo-categories 'general' (TELEGRAM_CHANNEL_GENERAL)\n"
+           "  and 'other' (never routed).\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* One pending announcement                                            */
+/* ------------------------------------------------------------------ */
+
+static isae_error_t process_pending(pipeline_t* pipeline, const feed_entry_t* entry) {
+    if (!pipeline || !entry) return ISAE_ERR_INVALID_PARAM;
+    settings_t* s = &pipeline->settings;
+    pipeline_report_t* r = &pipeline->report;
+
+    const char* key = entry->id;
+
+    /* Convert to announcement_t. */
+    announcement_t ann;
+    isae_error_t err = feed_entry_to_announcement(entry, &ann);
+    if (err != ISAE_OK) return err;
+
+    /* --- Phase A: send to general channel (if needed & configured) --- */
+    if (state_needs_general(&pipeline->state, key) && s->telegram_channel_general[0]) {
+        char* msg = telegram_format_message(&ann, NULL);  /* no label for general */
+        if (msg) {
+            long status = 0;
+            isae_error_t send_err = telegram_send_message(&pipeline->telegram,
+                                                          s->telegram_channel_general,
+                                                          msg, &status);
+            if (send_err == ISAE_OK) {
+                state_mark_general_sent(&pipeline->state, key);
+                r->general_sent++;
+            } else {
+                char emsg[256];
+                snprintf(emsg, sizeof(emsg), "general send failed: HTTP %ld", status);
+                pipeline_report_add_error(r, emsg);
+                /* g stays false; retries next run. */
+            }
+            free(msg);
+        }
+    }
+
+    /* --- Phase B: classify (always runs if needs_classification,
+     * even if general send failed) --- */
+    if (state_needs_classification(&pipeline->state, key)) {
+        classification_result_t result;
+        classification_result_init(&result);
+        err = classifier_classify(&pipeline->classifier, &ann, &result);
+        if (err != ISAE_OK) {
+            /* Should never happen -- keyword fallback always succeeds. */
+            char emsg[256];
+            snprintf(emsg, sizeof(emsg), "classifier returned error: %s", isae_strerror(err));
+            pipeline_report_add_error(r, emsg);
+            announcement_cleanup(&ann);
+            return err;
+        }
+
+        pipeline_report_add_classified(r, result.category);
+        if (!result.is_ai) r->fallback_used++;
+        if (!s->quiet) {
+            printf("    -> %s (via %s)\n",
+                    departments_label_for(result.category) ? departments_label_for(result.category) : result.category,
+                    result.source);
+        }
+
+        /* Route to department channel if configured. */
+        const char* dept_chat = config_dept_channel(s, result.category);
+        bool delivered = false;
+        if (dept_chat) {
+            char* msg = telegram_format_message(&ann, result.category);
+            if (msg) {
+                long status = 0;
+                isae_error_t send_err = telegram_send_message(&pipeline->telegram, dept_chat, msg, &status);
+                if (send_err == ISAE_OK) {
+                    r->department_sent++;
+                    delivered = true;
+                } else {
+                    char emsg[256];
+                    snprintf(emsg, sizeof(emsg), "dept send failed for %s: HTTP %ld", result.category, status);
+                    pipeline_report_add_error(r, emsg);
+                    /* c stays NULL; re-classify next run. */
+                }
+                free(msg);
+            }
+        }
+        if (delivered) {
+            state_mark_classified(&pipeline->state, key, result.category);
+        }
+        /* ann.category kept for diagnostics, no need to free separately */
+    }
+
+    announcement_cleanup(&ann);
+
+    /* Save after every announcement (Python's load-bearing durability). */
+    if (pipeline->interrupted) {
+        (void)state_save(&pipeline->state);
+        return ISAE_ERR_INTERRUPTED;
+    }
+    return state_save(&pipeline->state);
+}
+
+/* ------------------------------------------------------------------ */
+/* pipeline_run -- one-shot pass                                       */
+/* ------------------------------------------------------------------ */
+
+isae_error_t pipeline_run(pipeline_t* pipeline) {
+    if (!pipeline) return ISAE_ERR_INVALID_PARAM;
+    pipeline_report_init(&pipeline->report);
+
+    if (pipeline->state.recovered_from_corruption) {
+        pipeline_report_add_error(&pipeline->report,
+            "state file was corrupt -- moved to .corrupt. Run --bootstrap to mark current feed entries as seen.");
+    }
+
+    /* Fetch the feed (single URL, not per-department). */
+    feed_result_t feed;
+    feed_result_init(&feed);
+    http_client_config_t http_cfg = pipeline->telegram.http_cfg;
+    isae_error_t err = feed_fetch(pipeline->settings.feed_url, &http_cfg, &feed);
+    if (err != ISAE_OK) {
+        feed_result_cleanup(&feed);
+        return ISAE_ERR_FEED;
+    }
+    pipeline->report.fetched = feed.count;
+
+    /* Bootstrap mode: mark every current entry as seen, send nothing. */
+    if (pipeline->settings.bootstrap) {
+        for (size_t i = 0; i < feed.count; i++) {
+            state_mark_all_seen(&pipeline->state, feed.entries[i].id, NULL);
+        }
+        (void)state_save(&pipeline->state);
+        if (!pipeline->settings.quiet) {
+            printf("Bootstrap: marked %zu feed entries as seen.\n", feed.count);
+        }
+        feed_result_cleanup(&feed);
+        return ISAE_OK;
+    }
+
+    /* Find pending entries. */
+    size_t pending = 0;
+    for (size_t i = 0; i < feed.count; i++) {
+        if (state_needs_general(&pipeline->state, feed.entries[i].id) ||
+            state_needs_classification(&pipeline->state, feed.entries[i].id)) {
+            pending++;
+        }
+    }
+    pipeline->report.pending = pending;
+
+    if (pending == 0) {
+        if (!pipeline->settings.quiet) printf("Nothing to do.\n");
+        feed_result_cleanup(&feed);
+        return ISAE_OK;
+    }
+
+    if (!pipeline->settings.quiet) {
+        printf("Processing %zu pending announcement(s)...\n", pending);
+    }
+
+    /* Process each pending entry. */
+    for (size_t i = 0; i < feed.count; i++) {
+        const char* key = feed.entries[i].id;
+        if (!key || !key[0]) continue;
+        if (!state_needs_general(&pipeline->state, key) &&
+            !state_needs_classification(&pipeline->state, key)) continue;
+
+        if (!pipeline->settings.quiet) {
+            printf("\n  %s\n", feed.entries[i].title[0] ? feed.entries[i].title : "(sans titre)");
+        }
+
+        err = process_pending(pipeline, &feed.entries[i]);
+        if (err == ISAE_ERR_INTERRUPTED) {
+            feed_result_cleanup(&feed);
+            return err;
+        }
+        if (err != ISAE_OK) {
+            char emsg[256];
+            snprintf(emsg, sizeof(emsg), "process error: %s", isae_strerror(err));
+            pipeline_report_add_error(&pipeline->report, emsg);
+        }
+    }
+
+    /* Surface classifier notes (dead keys, etc) as errors in the report. */
+    int notes_count = 0;
+    const char* const* notes = classifier_notes(&pipeline->classifier, &notes_count);
+    for (int i = 0; i < notes_count; i++) {
+        pipeline_report_add_error(&pipeline->report, notes[i]);
+    }
+
+    feed_result_cleanup(&feed);
+    return ISAE_OK;
 }
