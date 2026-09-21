@@ -208,7 +208,20 @@ isae_error_t feed_parse_xml(const char* xml_content, size_t xml_size,
     
     /* Parse entries/items */
     result->count = 0;
-    for (xmlNode* node = root->children; node && result->count < MAX_ANNOUNCEMENTS_PER_FEED; 
+    
+    /* For RSS feeds, items are inside a <channel> element */
+    xmlNode* container = root;
+    if (!is_atom) {
+        /* Look for channel element in RSS feeds */
+        for (xmlNode* node = root->children; node; node = node->next) {
+            if (xmlStrcmp(node->name, (const xmlChar*)"channel") == 0) {
+                container = node;
+                break;
+            }
+        }
+    }
+    
+    for (xmlNode* node = container->children; node && result->count < MAX_ANNOUNCEMENTS_PER_FEED; 
          node = node->next) {
         
         if (is_atom && xmlStrcmp(node->name, (const xmlChar*)"entry") == 0) {
