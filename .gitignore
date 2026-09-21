@@ -3,57 +3,38 @@
 *.o
 *.obj
 *.out
-*.exe
-*.dll
-*.so
 *.a
+*.so
+*.dll
+*.exe
 
 # Dependencies
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
+node_modules/
 venv/
 .venv/
-.env
-.env.local
-*.env.*
-
-# Build directories
-build/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
 dist/
-*.egg-info/
-*isae_monitor
+build/
+target/
+.gradle/
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
-*.swo
+
+# Environment
+.env
+.env.local
+*.env.*
 
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # System files
 .DS_Store
 Thumbs.db
-
-# Coverage
-.coverage
-coverage/
-htmlcov/
-
-# MyPy
-.mypy_cache/
-__pycache__/
-
-# PyTest
-.pytest_cache/
-
-# Original rules preserved
 ```
