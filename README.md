@@ -76,12 +76,49 @@ make
 
 ## Configuration
 
+### Quick Start with .env File (Recommended)
+
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` and fill in your credentials:
+```bash
+# --- AI classification ---
+GEMINI_API_KEYS=""
+GEMINI_MODEL="gemini-2.5-flash"
+
+OPENROUTER_API_KEY=""
+OPENROUTER_MODEL="meta-llama/llama-3.3-70b-instruct"
+
+# --- Telegram ---
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHANNEL_GENERAL="-1004400822258"
+TELEGRAM_CHANNEL_INFORMATIQUE="-1003990694618"
+TELEGRAM_CHANNEL_CIVIL="-1003758430394"
+TELEGRAM_CHANNEL_ELECTRIQUE="-1004482925700"
+TELEGRAM_CHANNEL_MECANIQUE="-1003843371403"
+TELEGRAM_CHANNEL_PROCEDES="-1004320943026"
+TELEGRAM_CHANNEL_ECONOMIE="-1004470547139"
+TELEGRAM_CHANNEL_STATISTIQUE="-1003859028258"
+TELEGRAM_CHANNEL_PHYSIQUE="-1004495769881"
+TELEGRAM_CHANNEL_LANGUES="-1003997581261"
+```
+
+3. Run the monitor (it will automatically load `.env` at startup):
+```bash
+./isae_monitor --interval 60
+```
+
+### Manual Environment Variables (Alternative)
+
 Set the following environment variables before running:
 
-### Required Variables
+#### Required Variables
 ```bash
-# Department Chat IDs (comma-separated for multiple chats)
-export TELEGRAM_CHAT_IDS="123456789,-987654321"
+# General Telegram channel (all announcements go here)
+export TELEGRAM_CHANNEL_GENERAL="-1004400822258"
 
 # At least one AI provider key
 export GEMINI_API_KEY="your-gemini-api-key"
@@ -89,10 +126,21 @@ export GEMINI_API_KEY="your-gemini-api-key"
 export OPENROUTER_API_KEY="your-openrouter-api-key"
 ```
 
-### Optional Variables
+#### Optional Variables
 ```bash
 # Telegram Bot Token (for sending notifications)
 export TELEGRAM_BOT_TOKEN="bot-token-here"
+
+# Department-specific channels (leave unset to skip that department)
+export TELEGRAM_CHANNEL_INFORMATIQUE="-1003990694618"
+export TELEGRAM_CHANNEL_CIVIL="-1003758430394"
+export TELEGRAM_CHANNEL_ELECTRIQUE="-1004482925700"
+export TELEGRAM_CHANNEL_MECANIQUE="-1003843371403"
+export TELEGRAM_CHANNEL_PROCEDES="-1004320943026"
+export TELEGRAM_CHANNEL_ECONOMIE="-1004470547139"
+export TELEGRAM_CHANNEL_STATISTIQUE="-1003859028258"
+export TELEGRAM_CHANNEL_PHYSIQUE="-1004495769881"
+export TELEGRAM_CHANNEL_LANGUES="-1003997581261"
 
 # Refresh interval in seconds (default: 300)
 export REFRESH_INTERVAL="60"
@@ -100,11 +148,8 @@ export REFRESH_INTERVAL="60"
 # Enable debug logging
 export DEBUG="1"
 
-# Custom state file location (default: ./isae_state.json)
-export STATE_FILE="/var/lib/isae_monitor/state.json"
-
-# Legacy channel variable (maps to first chat ID)
-export TELEGRAM_CHANNEL_ID="123456789"
+# Custom state file location (default: ~/.isae_monitor_state.json)
+export ISAE_STATE_FILE="/var/lib/isae_monitor/state.json"
 ```
 
 ## Usage
