@@ -99,23 +99,33 @@ long http_backoff_millis(int attempt, const char* retry_after) {
 /* Internal: shared per-attempt runner                                */
 /* ------------------------------------------------------------------ */
 
-/* Callback: cap body size at HTTP_MAX_BODY to bound memory. */
+/* Callback: cap body size at HTTP_MAX_RESPONSE_BODY to bound memory.
+ *
+ * NOTE: Python's httpclient does NOT cap successful response bodies --
+ * the 800-char MAX_BODY is only for error-message formatting. We use a
+ * generous 1 MiB cap here purely as a DoS guard; legitimate Atom feeds
+ * are well under 100 KiB. */
 static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t realsize = size * nmemb;
     http_response_t* resp = (http_response_t*)userp;
 
-    if (resp->body_size >= HTTP_MAX_BODY) {
-        return realsize;  /* silently drop further data */
+    /* If we've already hit the cap, "consume" the data without storing it.
+     * libcurl treats a return value != realsize as an error, so we MUST
+     * return the full realsize (not 0) to keep the transfer going. */
+    if (resp->body_size >= HTTP_MAX_RESPONSE_BODY) {
+        return realsize;
     }
-    size_t remaining = HTTP_MAX_BODY - resp->body_size;
-    if (realsize > remaining) realsize = remaining;
+    size_t remaining = HTTP_MAX_RESPONSE_BODY - resp->body_size;
+    size_t to_write = (realsize > remaining) ? remaining : realsize;
 
-    char* new_ptr = (char*)realloc(resp->body, resp->body_size + realsize + 1);
-    if (!new_ptr) return 0;  /* signal OOM to libcurl */
+    char* new_ptr = (char*)realloc(resp->body, resp->body_size + to_write + 1);
+    if (!new_ptr) return 0;  /* OOM -- aborts the transfer */
     resp->body = new_ptr;
-    memcpy(&resp->body[resp->body_size], contents, realsize);
-    resp->body_size += realsize;
+    memcpy(&resp->body[resp->body_size], contents, to_write);
+    resp->body_size += to_write;
     resp->body[resp->body_size] = '\0';
+    /* Always return the ORIGINAL realsize so libcurl considers the data
+     * consumed, even though we only wrote `to_write` bytes. */
     return realsize;
 }
 

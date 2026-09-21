@@ -302,11 +302,15 @@ isae_error_t feed_parse_xml(const char* xml_content, size_t xml_size,
 
     xmlFreeDoc(doc);
 
-    /* Reverse to oldest-first (Blogger returns newest-first). */
-    for (size_t i = 0, j = result->count - 1; i < j; i++, j--) {
-        feed_entry_t tmp = result->entries[i];
-        result->entries[i] = result->entries[j];
-        result->entries[j] = tmp;
+    /* Reverse to oldest-first (Blogger returns newest-first).
+     * Skip the reverse if count is 0 or 1 to avoid the size_t underflow
+     * when count == 0 (j = SIZE_MAX, then we read entries[SIZE_MAX]). */
+    if (result->count >= 2) {
+        for (size_t i = 0, j = result->count - 1; i < j; i++, j--) {
+            feed_entry_t tmp = result->entries[i];
+            result->entries[i] = result->entries[j];
+            result->entries[j] = tmp;
+        }
     }
 
     return ISAE_OK;

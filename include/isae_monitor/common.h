@@ -55,6 +55,7 @@
 
 /* HTTP client behavior. */
 #define HTTP_MAX_BODY 800            /* truncated body kept for error messages */
+#define HTTP_MAX_RESPONSE_BODY (1ul << 20)  /* 1 MiB cap on successful responses */
 #define HTTP_MAX_RETRIES_DEFAULT 3
 #define HTTP_BACKOFF_CAP_SECONDS 30
 #define HTTP_RETRY_AFTER_CAP_SECONDS 60

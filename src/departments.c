@@ -263,7 +263,11 @@ char* departments_describe_for_prompt(void) {
     char* out = (char*)malloc(total);
     if (!out) return NULL;
     size_t w = 0;
-#define APPEND(s) do { size_t n = strlen(s); if (w + n + 1 >= total) { free(out); return NULL; } memcpy(out + w, s, n); w += n; } while (0)
+    /* Bounds check: bail only if writing n bytes would overflow the buffer
+     * (i.e. leave no room for the trailing NUL). The estimate above is
+     * exactly tight, so `>` is correct (not `>=`, which would reject the
+     * last write because w + n + 1 == total at that point). */
+#define APPEND(s) do { size_t n = strlen(s); if (w + n + 1 > total) { free(out); return NULL; } memcpy(out + w, s, n); w += n; } while (0)
     for (size_t i = 0; i < NUM_DEPARTMENTS; i++) {
         APPEND("- ");
         APPEND(g_departments[i].key);
