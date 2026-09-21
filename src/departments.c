@@ -1,185 +1,203 @@
 /**
- * ISAE Monitor - Department Registry Implementation
- * 
- * Maps Python: departments.py -> C: departments.c
- * 
- * This module maintains a registry of all engineering departments
- * with their feed URLs and classification keys.
+ * ISAE Monitor - Department Registry
+ *
+ * Faithful C port of the Python isae_monitor/departments.py module.
+ *
+ * The institute (ISSAE / Cnam-Liban) has nine departments; every
+ * announcement is fetched from a single Atom feed and routed AFTER
+ * classification. There is no per-department feed URL.
  */
 
 #include "isae_monitor/departments.h"
+
+#include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 
-/* Internal department database */
-static department_t g_departments[] = {
-    {
-        .key = "INFO",
-        .name = "Computer Science",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_INFO
-    },
-    {
-        .key = "ELECM",
-        .name = "Electronics",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_ELECM
-    },
-    {
-        .key = "ELM",
-        .name = "Electrical Engineering",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_ELM
-    },
-    {
-        .key = "MECM",
-        .name = "Mechanical Engineering",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_MECM
-    },
-    {
-        .key = "CECM",
-        .name = "Civil Engineering",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_CECM
-    },
-    {
-        .key = "GPIM",
-        .name = "Industrial Engineering",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_GPIM
-    },
-    {
-        .key = "EAC",
-        .name = "Applied Economics",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_EAC
-    },
-    {
-        .key = "MATHS",
-        .name = "Mathematics",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_MATHS
-    },
-    {
-        .key = "PHYSIQUE",
-        .name = "Physics",
-        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
-        .type = DEPT_PHYSIQUE
-    }
+/* Each alias list is NULL-terminated. */
+static const char* const ALIAS_INFO[]      = { "cs", "info", "computer", "it", NULL };
+static const char* const ALIAS_CIVIL[]     = { "gc", "civile", NULL };
+static const char* const ALIAS_ELECTRIQUE[]= { "ge", "electrical", "electricite", NULL };
+static const char* const ALIAS_MECANIQUE[] = { "gm", "mechanical", "meca", NULL };
+static const char* const ALIAS_PROCEDES[]  = { "gp", "process", "petrole", NULL };
+static const char* const ALIAS_ECONOMIE[]  = { "eco", "eco_g", "economie et gestion", "business", NULL };
+static const char* const ALIAS_STATISTIQUE[] = { "stat", "stats", "data", NULL };
+static const char* const ALIAS_PHYSIQUE[]  = { "cspm", "maths", "math", "maths_physique", NULL };
+static const char* const ALIAS_LANGUES[]   = { "langue", "language", "languages", "fle", NULL };
+
+static const department_t g_departments[NUM_DEPARTMENTS] = {
+    { "informatique", "Génie Informatique",                  "Informatique",       ALIAS_INFO },
+    { "civil",        "Génie Civil",                        "Génie Civil",        ALIAS_CIVIL },
+    { "electrique",   "Génie Électrique",                   "Génie Électrique",   ALIAS_ELECTRIQUE },
+    { "mecanique",    "Génie Mécanique",                    "Génie Mécanique",    ALIAS_MECANIQUE },
+    { "procedes",     "Génie des Procédés",                  "Génie des Procédés", ALIAS_PROCEDES },
+    { "economie",     "Économie et Gestion",                 "Économie & Gestion", ALIAS_ECONOMIE },
+    { "statistique",  "Statistique et Mathématiques Appliquées", "Statistique",    ALIAS_STATISTIQUE },
+    { "physique",     "Sciences Physiques et Mathématiques", "Sciences Physiques & Maths", ALIAS_PHYSIQUE },
+    { "langues",      "Langues",                             "Langues",            ALIAS_LANGUES },
 };
 
-/* Alias mapping for flexible key matching */
-typedef struct {
-    const char* alias;
-    const char* canonical_key;
-} alias_mapping_t;
-
-static alias_mapping_t g_aliases[] = {
-    {"informatique", "INFO"},
-    {"info", "INFO"},
-    {"computer", "INFO"},
-    {"electronique", "ELECM"},
-    {"elec", "ELECM"},
-    {"electronics", "ELECM"},
-    {"electrique", "ELM"},
-    {"electrical", "ELM"},
-    {"energy", "ELM"},
-    {"mecanique", "MECM"},
-    {"mechanical", "MECM"},
-    {"civil", "CECM"},
-    {"genie-civil", "CECM"},
-    {"industriel", "GPIM"},
-    {"industrie", "GPIM"},
-    {"economie", "EAC"},
-    {"economics", "EAC"},
-    {"maths", "MATHS"},
-    {"mathematics", "MATHS"},
-    {"math", "MATHS"},
-    {"physique", "PHYSIQUE"},
-    {"physics", "PHYSIQUE"}
+/* Short descriptions used in the AI prompt. Keep them in registry order so
+ * the prompt is deterministic. */
+static const char* const g_descriptions[NUM_DEPARTMENTS] = {
+    "specifically about the Génie Informatique (Computer Engineering / Computer Science) department, its students or its courses",
+    "specifically about the Génie Civil (Civil Engineering) department, its students or its courses",
+    "specifically about the Génie Électrique (Electrical Engineering) department, its students or its courses",
+    "specifically about the Génie Mécanique (Mechanical Engineering) department, its students or its courses",
+    "specifically about the Génie des Procédés (Process / Petroleum Engineering) department, its students or its courses",
+    "specifically about the Économie et Gestion department, its students or its courses",
+    "specifically about the Statistique et Mathématiques Appliquées department, its students or its courses",
+    "specifically about the Sciences Physiques et Mathématiques department, its students or its courses",
+    "specifically about the Langues department, its students or its courses",
 };
-
-static size_t g_num_departments = sizeof(g_departments) / sizeof(g_departments[0]);
-static size_t g_num_aliases = sizeof(g_aliases) / sizeof(g_aliases[0]);
 
 void departments_init(void) {
-    /* Nothing to initialize - static data */
-    /* This function exists for API consistency */
-}
-
-const department_t* departments_get_by_key(const char* key) {
-    if (!key) {
-        return NULL;
-    }
-    
-    /* Convert to uppercase for comparison */
-    char upper_key[MAX_DEPARTMENT_KEY];
-    size_t len = strlen(key);
-    if (len >= MAX_DEPARTMENT_KEY) {
-        len = MAX_DEPARTMENT_KEY - 1;
-    }
-    
-    for (size_t i = 0; i < len; i++) {
-        upper_key[i] = (char)toupper((unsigned char)key[i]);
-    }
-    upper_key[len] = '\0';
-    
-    /* Search in main departments */
-    for (size_t i = 0; i < g_num_departments; i++) {
-        if (strcmp(g_departments[i].key, upper_key) == 0) {
-            return &g_departments[i];
-        }
-    }
-    
-    return NULL;
-}
-
-const department_t* departments_get_by_type(department_type_t type) {
-    for (size_t i = 0; i < g_num_departments; i++) {
-        if (g_departments[i].type == type) {
-            return &g_departments[i];
-        }
-    }
-    return NULL;
+    /* static data, nothing to do */
 }
 
 size_t departments_count(void) {
-    return g_num_departments;
+    return NUM_DEPARTMENTS;
 }
 
 const department_t* departments_get_at(size_t index) {
-    if (index >= g_num_departments) {
-        return NULL;
-    }
+    if (index >= NUM_DEPARTMENTS) return NULL;
     return &g_departments[index];
 }
 
-bool departments_is_valid_alias(const char* alias, const char** out_key) {
-    if (!alias) {
-        return false;
-    }
-    
-    /* Convert to lowercase for comparison */
-    char lower_alias[MAX_DEPARTMENT_KEY];
-    size_t len = strlen(alias);
-    if (len >= MAX_DEPARTMENT_KEY) {
-        len = MAX_DEPARTMENT_KEY - 1;
-    }
-    
-    for (size_t i = 0; i < len; i++) {
-        lower_alias[i] = (char)tolower((unsigned char)alias[i]);
-    }
-    lower_alias[len] = '\0';
-    
-    /* Search in aliases */
-    for (size_t i = 0; i < g_num_aliases; i++) {
-        if (strcmp(g_aliases[i].alias, lower_alias) == 0) {
-            if (out_key) {
-                *out_key = g_aliases[i].canonical_key;
-            }
-            return true;
+const department_t* departments_get_by_key(const char* key) {
+    if (!key) return NULL;
+    for (size_t i = 0; i < NUM_DEPARTMENTS; i++) {
+        if (strcmp(g_departments[i].key, key) == 0) {
+            return &g_departments[i];
         }
     }
-    
-    return false;
+    return NULL;
+}
+
+/* Normalize an alias for matching: lowercase, underscores->spaces, strip.
+ * Writes into the caller-provided buffer (capacity MAX_DEPARTMENT_KEY). */
+static void normalize_alias(const char* in, char* out, size_t cap) {
+    if (!in || !out || cap == 0) {
+        if (out && cap) out[0] = '\0';
+        return;
+    }
+    size_t w = 0;
+    bool in_space_pending = false;
+    for (size_t r = 0; in[r] && w + 1 < cap; r++) {
+        unsigned char c = (unsigned char)in[r];
+        if (c == '_' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            /* collapse runs of whitespace + underscores into a single space,
+             * leading/trailing stripped */
+            if (w > 0) in_space_pending = true;
+            continue;
+        }
+        if (in_space_pending) {
+            if (w + 1 < cap) out[w++] = ' ';
+            in_space_pending = false;
+        }
+        out[w++] = (char)tolower(c);
+    }
+    out[w] = '\0';
+}
+
+const char* departments_resolve(const char* label) {
+    if (!label || !*label) return NULL;
+
+    char norm[MAX_DEPARTMENT_KEY];
+    normalize_alias(label, norm, sizeof(norm));
+    if (!*norm) return NULL;
+
+    for (size_t i = 0; i < NUM_DEPARTMENTS; i++) {
+        /* canonical key match (normalized) */
+        char key_norm[MAX_DEPARTMENT_KEY];
+        normalize_alias(g_departments[i].key, key_norm, sizeof(key_norm));
+        if (strcmp(key_norm, norm) == 0) return g_departments[i].key;
+
+        /* alias match */
+        for (const char* const* a = g_departments[i].aliases; *a; a++) {
+            char alias_norm[MAX_DEPARTMENT_KEY];
+            normalize_alias(*a, alias_norm, sizeof(alias_norm));
+            if (strcmp(alias_norm, norm) == 0) return g_departments[i].key;
+        }
+    }
+    return NULL;
+}
+
+const char* departments_resolve_or_empty(const char* label) {
+    const char* r = departments_resolve(label);
+    return r ? r : "";
+}
+
+const char* departments_env_var(const char* key) {
+    static char env_name[64]; /* enough for "TELEGRAM_CHANNEL_INFORMATIQUE\0" */
+    const department_t* d = departments_get_by_key(key);
+    if (!d) return NULL;
+    int n = snprintf(env_name, sizeof(env_name), "TELEGRAM_CHANNEL_%s", d->key);
+    if (n < 0 || (size_t)n >= sizeof(env_name)) return NULL;
+    /* The key is always lowercase ASCII, so we uppercase in place. */
+    for (char* p = env_name + strlen("TELEGRAM_CHANNEL_"); *p; p++) {
+        *p = (char)toupper((unsigned char)*p);
+    }
+    return env_name;
+}
+
+const char* departments_label_for(const char* key) {
+    if (!key) return NULL;
+    if (strcmp(key, CATEGORY_GENERAL) == 0) return "General";
+    if (strcmp(key, CATEGORY_OTHER) == 0)   return "Other";
+    const department_t* d = departments_get_by_key(key);
+    return d ? d->label : NULL;
+}
+
+bool departments_is_valid_category(const char* key) {
+    if (!key) return false;
+    if (strcmp(key, CATEGORY_GENERAL) == 0) return true;
+    if (strcmp(key, CATEGORY_OTHER) == 0)   return true;
+    return departments_get_by_key(key) != NULL;
+}
+
+bool departments_is_real_department(const char* key) {
+    if (!key) return false;
+    return departments_get_by_key(key) != NULL;
+}
+
+char* departments_describe_for_prompt(void) {
+    /* Pre-compute the total length we will need:
+     *   "- " + key + ": " + description + "\n"
+     * for each of the 9 departments, plus general/other lines, plus trailing nul. */
+    size_t total = 1;
+    static const char* const extras[2] = {
+        "concerns ALL students regardless of department (fees, registration, holidays, institute-wide exam calendars, campus closures, transport, general language/admin notices)",
+        "none of the above (e.g. an unrelated job advert, a supplier notice, or something not aimed at students)",
+    };
+    static const char* const extra_keys[2] = { CATEGORY_GENERAL, CATEGORY_OTHER };
+
+    for (size_t i = 0; i < NUM_DEPARTMENTS; i++) {
+        total += 2 + strlen(g_departments[i].key) + 2 + strlen(g_descriptions[i]) + 1;
+    }
+    for (size_t i = 0; i < 2; i++) {
+        total += 2 + strlen(extra_keys[i]) + 2 + strlen(extras[i]) + 1;
+    }
+
+    char* out = (char*)malloc(total);
+    if (!out) return NULL;
+    size_t w = 0;
+#define APPEND(s) do { size_t n = strlen(s); if (w + n + 1 >= total) { free(out); return NULL; } memcpy(out + w, s, n); w += n; } while (0)
+    for (size_t i = 0; i < NUM_DEPARTMENTS; i++) {
+        APPEND("- ");
+        APPEND(g_departments[i].key);
+        APPEND(": ");
+        APPEND(g_descriptions[i]);
+        APPEND("\n");
+    }
+    for (size_t i = 0; i < 2; i++) {
+        APPEND("- ");
+        APPEND(extra_keys[i]);
+        APPEND(": ");
+        APPEND(extras[i]);
+        APPEND("\n");
+    }
+#undef APPEND
+    out[w] = '\0';
+    return out;
 }
