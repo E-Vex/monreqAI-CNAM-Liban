@@ -3,56 +3,72 @@
 
 #include "common.h"
 
-/* Number of department channels */
-#define NUM_DEPT_CHANNELS 10
-
-/* Department channel names (for reference) */
-#define DEPT_CHANNEL_NAMES \
-    X(INFORMATIQUE) \
-    X(CIVIL) \
-    X(ELECTRIQUE) \
-    X(MECANIQUE) \
-    X(PROCEDES) \
-    X(ECONOMIE) \
-    X(STATISTIQUE) \
-    X(PHYSIQUE) \
-    X(LANGUES) \
-    X(GENERAL)
-
-/* Configuration structure */
+/* Full configuration for one run of the monitor.
+ *
+ * Mirrors Python isae_monitor.config.Settings. Every field has an env
+ * var (or two for legacy) and a sensible default. The dry_run / bootstrap
+ * / check / list_departments / quiet fields are CLI flags rather than
+ * env vars (the Python tool parses them via argparse). */
 typedef struct {
-    char state_file[MAX_URL_LEN];
-    int poll_interval;
-    int http_timeout;
-    char gemini_api_key[MAX_API_KEY_LEN];
-    char openrouter_api_key[MAX_API_KEY_LEN];
-    char telegram_bot_token[MAX_API_KEY_LEN];
-    char telegram_channel_general[MAX_CHAT_ID_LEN];
-    char telegram_channel_informatique[MAX_CHAT_ID_LEN];
-    char telegram_channel_civil[MAX_CHAT_ID_LEN];
-    char telegram_channel_electrique[MAX_CHAT_ID_LEN];
-    char telegram_channel_mecanique[MAX_CHAT_ID_LEN];
-    char telegram_channel_procedes[MAX_CHAT_ID_LEN];
-    char telegram_channel_economie[MAX_CHAT_ID_LEN];
-    char telegram_channel_statistique[MAX_CHAT_ID_LEN];
-    char telegram_channel_physique[MAX_CHAT_ID_LEN];
-    char telegram_channel_langues[MAX_CHAT_ID_LEN];
-    provider_type_t provider;
+    /* Feed */
+    char feed_url[MAX_URL_LEN];                       /* FEED_URL */
+
+    /* State */
+    char state_file[MAX_URL_LEN];                     /* STATE_FILE */
+
+    /* Gemini */
+    char gemini_keys[MAX_GEMINI_KEYS][MAX_API_KEY_LEN]; /* GEMINI_API_KEYS (comma-separated) */
+    int  gemini_keys_count;
+    char gemini_model[64];                            /* GEMINI_MODEL */
+
+    /* OpenRouter */
+    char openrouter_api_key[MAX_API_KEY_LEN];         /* OPENROUTER_API_KEY */
+    char openrouter_model[128];                      /* OPENROUTER_MODEL */
+
+    /* Telegram */
+    char telegram_bot_token[MAX_API_KEY_LEN];         /* TELEGRAM_BOT_TOKEN */
+    char telegram_channel_general[MAX_CHAT_ID_LEN];   /* TELEGRAM_CHANNEL_GENERAL */
+    char department_channels[NUM_DEPARTMENTS][MAX_CHAT_ID_LEN]; /* per-department TELEGRAM_CHANNEL_<KEY> */
+
+    /* HTTP client */
+    int  request_timeout;                             /* REQUEST_TIMEOUT (seconds) */
+    int  max_retries;                                 /* MAX_RETRIES */
+
+    /* Telegram client */
+    double send_interval;                             /* SEND_INTERVAL (seconds) */
+
+    /* State retention */
+    size_t state_history;                             /* STATE_HISTORY */
+
+    /* CLI flags (not env-driven). Defaults to false; main.c flips them. */
+    bool dry_run;
+    bool bootstrap;
+    bool check;
+    bool list_departments;
+    bool quiet;
 } settings_t;
 
-/* Initialize settings with defaults */
+/* Initialize with defaults. Also auto-loads .env from CWD (idempotent). */
 void config_init(settings_t* settings);
 
-/* Load configuration from environment variables */
+/* Populate settings from environment variables. */
 isae_error_t config_load(settings_t* settings);
 
-/* Validate configuration */
-isae_error_t config_validate(const settings_t* settings);
+/* Derived properties (mirror Python). */
+bool config_has_ai(const settings_t* settings);
+bool config_has_telegram(const settings_t* settings);
 
-/* Get the preferred API provider based on available keys */
-provider_type_t config_get_provider(const settings_t* settings);
+/* Return the department channel for a category, or NULL if not configured.
+ * Accepts canonical keys, "general", "other" (the latter two always return NULL). */
+const char* config_dept_channel(const settings_t* settings, const char* category);
 
-/* Get department channel ID by key, returns NULL if not configured */
-const char* config_get_dept_channel(const settings_t* settings, const char* dept_key);
+/* Render a one-line summary of the resolved config for --check output.
+ * Caller owns the returned string; free() it. */
+char* config_summary(const settings_t* settings);
+
+/* Render the list of config problems (warnings, not errors) for --check output.
+ * Each problem is written to the caller's callback. */
+typedef void (*config_problem_cb)(const char* message, void* user_data);
+void config_problems(const settings_t* settings, config_problem_cb cb, void* user_data);
 
 #endif /* ISAE_MONITOR_CONFIG_H */
