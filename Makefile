@@ -29,7 +29,8 @@ SRCS = src/main.c \
        src/keywords.c \
        src/classifier.c \
        src/telegram.c \
-       src/pipeline.c
+       src/pipeline.c \
+       src/dotenv.c
 
 OBJS = $(SRCS:src/%.c=build/%.o)
 TARGET = isae_monitor
