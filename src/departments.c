@@ -15,55 +15,55 @@ static department_t g_departments[] = {
     {
         .key = "INFO",
         .name = "Computer Science",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-informatique/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_INFO
     },
     {
         .key = "ELECM",
         .name = "Electronics",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-electronique/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_ELECM
     },
     {
         .key = "ELM",
         .name = "Electrical Engineering",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-energie-electrique/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_ELM
     },
     {
         .key = "MECM",
         .name = "Mechanical Engineering",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-mecanique/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_MECM
     },
     {
         .key = "CECM",
         .name = "Civil Engineering",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-genie-civil/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_CECM
     },
     {
         .key = "GPIM",
         .name = "Industrial Engineering",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-genie-industriel/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_GPIM
     },
     {
         .key = "EAC",
         .name = "Applied Economics",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-economie-appliquee/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_EAC
     },
     {
         .key = "MATHS",
         .name = "Mathematics",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-mathematiques/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_MATHS
     },
     {
         .key = "PHYSIQUE",
         .name = "Physics",
-        .feed_url = "https://www.isae-supaero.fr/fr/departement-physique/actualites/feed/",
+        .feed_url = "http://annonces.isae.edu.lb/feeds/posts/default?alt=rss",
         .type = DEPT_PHYSIQUE
     }
 };
