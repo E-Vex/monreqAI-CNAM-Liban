@@ -1,165 +1,161 @@
 /**
- * ISAE Monitor - Keyword Classifier Implementation
- * 
- * Maps Python: keywords.py -> C: keywords.c
- * 
- * Fallback classification using keyword matching when AI is unavailable.
+ * ISAE Monitor - Keyword Classification
+ *
+ * Faithful C port of Python isae_monitor/classify/keywords.py.
+ *
+ * Algorithm:
+ *   1. If any OTHER_MARKER (normalized) is a substring of the normalized
+ *      title+summary, return "other".
+ *   2. For each department, score its keywords against title and summary
+ *      independently:
+ *        TITLE_WEIGHT   = 3, multiplied by 2 if the keyword contains a space
+ *        SUMMARY_WEIGHT = 1, multiplied by 2 if the keyword contains a space
+ *        'elif' between title and summary: a keyword that appears in BOTH
+ *        is counted only once (in the title).
+ *   3. If exactly one department has the maximum score -> that's the winner.
+ *      Ties -> no decision -> fall through.
+ *   4. If any GENERAL_MARKER matches -> return "general".
+ *   5. Else -> return "general" (conservative default).
  */
 
 #include "isae_monitor/keywords.h"
-#include <ctype.h>
+#include "isae_monitor/departments.h"
 
-/* Keyword categories mapping */
-typedef struct {
-    const char* category;
-    const char** keywords;
-    size_t num_keywords;
-} keyword_category_t;
+#include <string.h>
 
-/* Keywords for each category */
-static const char* keywords_jobs[] = {
-    "emploi", "job", "recrutement", "embauche", "poste", "carriere",
-    "stage", "internship", "offre", "candidate", NULL
+#define TITLE_WEIGHT   3
+#define SUMMARY_WEIGHT 1
+
+static const char* const GENERAL_MARKERS[] = {
+    "tous les auditeurs", "tous les etudiants", "a tous", "all students",
+    "inscription", "registration", "frais", "fees", "rentree", "calendrier",
+    "vacance", "conge", "holiday", "ferme", "closure", "transport",
+    "horaire", "schedule", "deadline", "delai", "attestation", "diplome",
+    "\xd8\xa7\xd9\x84\xd9\x89 \xd8\xac\xd9\x85\xd9\x8a\xd8\xb9 \xd8\xa7\xd9\x84\xd8\xb7\xd9\x84\xd8\xa7\xd8\xa8",  /* الى جميع الطلاب */
+    "\xd8\xac\xd9\x85\xd9\x8a\xd8\xb9 \xd8\xa7\xd9\x84\xd8\xb7\xd9\x84\xd8\xa7\xd8\xa8",  /* جميع الطلاب */
+    "\xd9\x83\xd8\xa7\xd9\x81\xd8\xa9 \xd8\xa7\xd9\x84\xd9\x85\xd8\xb1\xd8\xa7\xd9\x83\xd8\xb2",  /* كافة المراكز */
+    "\xd8\xa7\xd9\x84\xd8\xaa\xd8\xb3\xd8\xac\xd9\x8a\xd9\x84",  /* التسجيل */
+    "\xd8\xa7\xd9\x84\xd8\xb1\xd8\xb3\xd9\x88\xd9\x85",  /* الرسوم */
+    "\xd8\xb9\xd8\xb7\xd9\x84\xd8\xa9",  /* عطلة */
+    "\xd8\xa7\xd9\x84\xd9\x85\xd9\x88\xd8\xa7\xd8\xb9\xd9\x8a\xd8\xaf",  /* المواعيد */
+    "\xd8\xa7\xd8\xb9\xd9\x84\xd8\xa7\xd9\x86 \xd8\xb9\xd8\xa7\xd9\x85",  /* اعلان عام */
+    NULL,
 };
 
-static const char* keywords_events[] = {
-    "conference", "seminar", "colloque", "evenement", "event",
-    "reunion", "meeting", "presentation", "soutenance", "defense",
-    "journee", "atelier", "workshop", NULL
+static const char* const OTHER_MARKERS[] = {
+    "offre d'emploi", "job offer", "recrute", "recruitment", "vacancy",
+    "appel d'offres", "tender",
+    "\xd9\x81\xd8\xb1\xd8\xb5 \xd8\xb9\xd9\x85\xd9\x84",  /* فرص عمل */
+    "\xd9\x88\xd8\xb8\xd9\x8a\xd9\x81\xd8\xa9",  /* وظيفة */
+    "\xd9\x85\xd9\x86\xd8\xa7\xd9\x82\xd8\xb5\xd8\xa9",  /* مناقصة */
+    NULL,
 };
-
-static const char* keywords_courses[] = {
-    "cours", "course", "formation", "enseignement", "classe",
-    "examen", "evaluation", "tp", "td", "projet", "student", NULL
-};
-
-static const char* keywords_research[] = {
-    "recherche", "research", "publication", "article", "these",
-    "doctorat", "phd", "laboratoire", "lab", "scientifique", NULL
-};
-
-static const char* keywords_admin[] = {
-    "administration", "inscription", "registration", "secretariat",
-    "bureau", "office", "procedure", "dossier", NULL
-};
-
-static keyword_category_t g_categories[] = {
-    {"JOBS", keywords_jobs, sizeof(keywords_jobs) / sizeof(keywords_jobs[0]) - 1},
-    {"EVENTS", keywords_events, sizeof(keywords_events) / sizeof(keywords_events[0]) - 1},
-    {"COURSES", keywords_courses, sizeof(keywords_courses) / sizeof(keywords_courses[0]) - 1},
-    {"RESEARCH", keywords_research, sizeof(keywords_research) / sizeof(keywords_research[0]) - 1},
-    {"ADMIN", keywords_admin, sizeof(keywords_admin) / sizeof(keywords_admin[0]) - 1},
-};
-
-static size_t g_num_categories = sizeof(g_categories) / sizeof(g_categories[0]);
 
 void keyword_result_init(keyword_result_t* result) {
     if (!result) return;
-    
     result->category[0] = '\0';
     result->score = 0;
     result->matched = false;
 }
 
-void keyword_result_cleanup(keyword_result_t* result) {
-    /* Nothing to free - fixed size arrays */
-    (void)result;
+static bool any_marker_in(const char* const* markers, const char* text) {
+    for (size_t i = 0; markers[i]; i++) {
+        char folded[MAX_TEXT_NORMALIZED_LEN];
+        if (normalize_text(markers[i], folded, sizeof(folded)) != ISAE_OK) continue;
+        if (!folded[0]) continue;
+        if (strstr(text, folded) != NULL) return true;
+    }
+    return false;
 }
 
-static int count_keyword_matches(const char* text, const char** keywords, size_t num_keywords) {
-    if (!text || !keywords) {
-        return 0;
-    }
-    
-    int count = 0;
-    const char* p = text;
-    
-    while (*p) {
-        for (size_t k = 0; k < num_keywords; k++) {
-            const char* kw = keywords[k];
-            size_t kw_len = strlen(kw);
-            
-            /* Check for word boundary match */
-            if (strncasecmp(p, kw, kw_len) == 0) {
-                /* Check word boundaries */
-                int valid_start = (p == text || !isalnum((unsigned char)*(p-1)));
-                int valid_end = (!p[kw_len] || !isalnum((unsigned char)p[kw_len]));
-                
-                if (valid_start && valid_end) {
-                    count++;
-                    p += kw_len;
-                    break;
-                }
-            }
+/* Returns the score for a single department against the given title/summary
+ * (both already normalized). */
+static int score_one_department(const department_t* dept,
+                                const char* title, const char* summary) {
+    int score = 0;
+    for (const char* const* kp = dept->keywords; *kp; kp++) {
+        char folded[MAX_TEXT_NORMALIZED_LEN];
+        if (normalize_text(*kp, folded, sizeof(folded)) != ISAE_OK) continue;
+        if (!folded[0]) continue;
+
+        bool multi_word = (strchr(folded, ' ') != NULL);
+        int weight = multi_word ? 2 : 1;
+
+        if (strstr(title, folded) != NULL) {
+            score += TITLE_WEIGHT * weight;
+        } else if (strstr(summary, folded) != NULL) {
+            score += SUMMARY_WEIGHT * weight;
         }
-        p++;
+        /* else: not present, contributes nothing */
     }
-    
-    return count;
+    return score;
 }
 
-isae_error_t keywords_classify(const announcement_t* ann, 
-                               keyword_result_t* result) {
-    if (!ann || !result) {
-        return ISAE_ERR_INVALID_PARAM;
-    }
-    
+isae_error_t keywords_classify(announcement_t* ann, keyword_result_t* result) {
+    if (!ann || !result) return ISAE_ERR_INVALID_PARAM;
     keyword_result_init(result);
-    
-    /* Get normalized text or combine title + summary */
-    const char* text = ann->normalized_text;
-    char temp_text[MAX_TEXT_NORMALIZED_LEN];
-    
-    if (!text || !*text) {
-        /* Build combined text */
-        temp_text[0] = '\0';
-        if (ann->title) {
-            strncpy(temp_text, ann->title, sizeof(temp_text) - 1);
-        }
-        if (ann->summary) {
-            size_t len = strlen(temp_text);
-            if (len < sizeof(temp_text) - 2) {
-                temp_text[len] = ' ';
-                strncat(temp_text, ann->summary, sizeof(temp_text) - len - 2);
-            }
-        }
-        
-        /* Normalize it */
-        isae_error_t err = normalize_text(temp_text, temp_text, sizeof(temp_text));
-        if (err == ISAE_OK) {
-            text = temp_text;
-        } else {
-            text = ann->title ? ann->title : "";
-        }
+
+    /* Build the combined search text. announcement_search_text() handles
+     * caching (compute once, reuse on subsequent calls). */
+    const char* text = announcement_search_text(ann);
+    if (!text) {
+        /* Fall back to GENERAL on OOM. */
+        strncpy(result->category, CATEGORY_GENERAL, sizeof(result->category) - 1);
+        result->category[sizeof(result->category) - 1] = '\0';
+        return ISAE_OK;
     }
-    
-    /* Score each category */
+
+    /* Step 1: OTHER_MARKERS first. */
+    if (any_marker_in(OTHER_MARKERS, text)) {
+        strncpy(result->category, CATEGORY_OTHER, sizeof(result->category) - 1);
+        result->category[sizeof(result->category) - 1] = '\0';
+        result->matched = true;
+        return ISAE_OK;
+    }
+
+    /* Step 2-3: score every department, find unique max. */
+    char norm_title[MAX_TEXT_NORMALIZED_LEN];
+    char norm_summary[MAX_TEXT_NORMALIZED_LEN];
+    norm_title[0] = '\0';
+    norm_summary[0] = '\0';
+    if (ann->title)   normalize_text(ann->title,   norm_title,   sizeof(norm_title));
+    if (ann->summary) normalize_text(ann->summary, norm_summary, sizeof(norm_summary));
+
     int best_score = 0;
-    const char* best_category = "UNKNOWN";
-    
-    for (size_t i = 0; i < g_num_categories; i++) {
-        int score = count_keyword_matches(text, g_categories[i].keywords, 
-                                          g_categories[i].num_keywords);
-        
-        if (score > best_score) {
-            best_score = score;
-            best_category = g_categories[i].category;
+    const char* best_key = NULL;
+    int num_at_best = 0;
+
+    for (size_t i = 0; i < departments_count(); i++) {
+        const department_t* d = departments_get_at(i);
+        int s = score_one_department(d, norm_title, norm_summary);
+        if (s == 0) continue;
+        if (s > best_score) {
+            best_score = s;
+            best_key = d->key;
+            num_at_best = 1;
+        } else if (s == best_score) {
+            num_at_best++;
         }
     }
-    
-    /* Set result */
-    if (best_score > 0) {
-        strncpy(result->category, best_category, MAX_CATEGORY_NAME - 1);
-        result->category[MAX_CATEGORY_NAME - 1] = '\0';
+
+    if (best_key && num_at_best == 1) {
+        strncpy(result->category, best_key, sizeof(result->category) - 1);
+        result->category[sizeof(result->category) - 1] = '\0';
         result->score = best_score;
         result->matched = true;
-    } else {
-        /* Default fallback */
-        strncpy(result->category, "GENERAL", MAX_CATEGORY_NAME - 1);
-        result->category[MAX_CATEGORY_NAME - 1] = '\0';
-        result->score = 0;
-        result->matched = false;
+        return ISAE_OK;
     }
-    
+
+    /* Step 4-5: GENERAL (the marker check is functionally a no-op since
+     * both branches return GENERAL, but it's preserved for parity). */
+    if (any_marker_in(GENERAL_MARKERS, text)) {
+        strncpy(result->category, CATEGORY_GENERAL, sizeof(result->category) - 1);
+        result->category[sizeof(result->category) - 1] = '\0';
+        result->matched = true;
+        return ISAE_OK;
+    }
+
+    strncpy(result->category, CATEGORY_GENERAL, sizeof(result->category) - 1);
+    result->category[sizeof(result->category) - 1] = '\0';
     return ISAE_OK;
 }

@@ -14,7 +14,8 @@ typedef struct {
     const char* key;          /* routing key (lowercase, ASCII)          */
     const char* name_fr;      /* display name in French                  */
     const char* label;        /* short label shown in Telegram prefix    */
-    const char* const* aliases; /* NULL-terminated alias list            */
+    const char* const* aliases;     /* NULL-terminated alias list        */
+    const char* const* keywords;    /* NULL-terminated keyword list      */
 } department_t;
 
 /* Pseudo-categories. These are not in the registry but are valid classifier

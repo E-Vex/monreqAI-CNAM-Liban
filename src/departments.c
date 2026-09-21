@@ -25,16 +25,97 @@ static const char* const ALIAS_STATISTIQUE[] = { "stat", "stats", "data", NULL }
 static const char* const ALIAS_PHYSIQUE[]  = { "cspm", "maths", "math", "maths_physique", NULL };
 static const char* const ALIAS_LANGUES[]   = { "langue", "language", "languages", "fle", NULL };
 
+/* Keyword tables -- faithfully ported from isae_monitor/departments.py. */
+static const char* const KW_INFO[] = {
+    "informatique", "genie informatique", "computer science",
+    "computer engineering", "programmation", "programming",
+    "algorithme", "algorithm", "reseaux", "network", "logiciel",
+    "software", "base de donnees", "database", "cybersecurite",
+    "intelligence artificielle",
+    "\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd8\xa7\xd9\x84\xd9\x85\xd8\xb9\xd9\x84\xd9\x88\xd9\x85\xd8\xa7\xd8\xaa\xd9\x8a\xd8\xa9",  /* هندسة المعلوماتية */
+    "\xd9\x85\xd8\xb9\xd9\x84\xd9\x88\xd9\x85\xd8\xa7\xd8\xaa\xd9\x8a\xd8\xa9",  /* معلوماتية */
+    "\xd8\xa8\xd8\xb1\xd9\x85\xd8\xac\xd8\xa9",  /* برمجة */
+    NULL,
+};
+static const char* const KW_CIVIL[] = {
+    "genie civil", "civil engineering", "batiment", "construction",
+    "beton", "structures", "parasismique", "topographie",
+    "ouvrages d'art", "routes", "hydraulique",
+    "\xd8\xa7\xd9\x84\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd8\xa7\xd9\x84\xd9\x85\xd8\xaf\xd9\x86\xd9\x8a\xd8\xa9",  /* الهندسة المدنية */
+    "\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd9\x85\xd8\xaf\xd9\x86\xd9\x8a\xd8\xa9",  /* هندسة مدنية */
+    "\xd8\xa8\xd9\x86\xd8\xa7\xd8\xa1",  /* بناء */
+    NULL,
+};
+static const char* const KW_ELECTRIQUE[] = {
+    "genie electrique", "electrical engineering", "electrotechnique",
+    "electronique", "automatique", "signal", "ascensoriste",
+    "energetique", "climatique", "froid", "hvac",
+    "\xd8\xa7\xd9\x84\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd8\xa7\xd9\x84\xd9\x83\xd9\x87\xd8\xb1\xd8\xa8\xd8\xa7\xd8\xa6\xd9\x8a\xd8\xa9",  /* الهندسة الكهربائية */
+    "\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd9\x83\xd9\x87\xd8\xb1\xd8\xa8\xd8\xa7\xd8\xa6\xd9\x8a\xd8\xa9",  /* هندسة كهربائية */
+    "\xd9\x83\xd9\x87\xd8\xb1\xd8\xa8\xd8\xa7\xd8\xa1",  /* كهرباء */
+    NULL,
+};
+static const char* const KW_MECANIQUE[] = {
+    "genie mecanique", "mechanical engineering", "mecanique",
+    "fabrication", "dessins industriels", "machines",
+    "mecanique des structures", "thermodynamique",
+    "\xd8\xa7\xd9\x84\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd8\xa7\xd9\x84\xd9\x85\xd9\x8a\xd9\x83\xd8\xa7\xd9\x86\xd9\x8a\xd9\x83\xd9\x8a\xd8\xa9",  /* الهندسة الميكانيكية */
+    "\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd9\x85\xd9\x8a\xd9\x83\xd8\xa7\xd9\x86\xd9\x8a\xd9\x83\xd9\x8a\xd8\xa9",  /* هندسة ميكانيكية */
+    NULL,
+};
+static const char* const KW_PROCEDES[] = {
+    "genie des procedes", "process engineering", "procedes",
+    "petrole", "petroleum", "chimie", "chemical", "raffinage",
+    "petrochimie",
+    "\xd9\x87\xd9\x86\xd8\xaf\xd8\xb3\xd8\xa9 \xd8\xa7\xd9\x84\xd8\xb9\xd9\x85\xd9\x84\xd9\x8a\xd8\xa7\xd8\xaa",  /* هندسة العمليات */
+    "\xd8\xa8\xd8\xaa\xd8\xb1\xd9\x88\xd9\x84",  /* بترول */
+    "\xd9\x83\xd9\x8a\xd9\x85\xd9\x8a\xd8\xa7\xd8\xa1",  /* كيمياء */
+    NULL,
+};
+static const char* const KW_ECONOMIE[] = {
+    "economie", "gestion", "economics", "management", "comptabilite",
+    "accounting", "finance", "marketing", "mpa", "droit des societes",
+    "audit",
+    "\xd8\xa7\xd9\x82\xd8\xaa\xd8\xb5\xd8\xa7\xd8\xaf",  /* اقتصاد */
+    "\xd8\xa7\xd8\xaf\xd8\xa7\xd8\xb1\xd8\xa9",  /* ادارة */
+    "\xd9\x85\xd8\xad\xd8\xa7\xd8\xb3\xd8\xa8\xd8\xa9",  /* محاسبة */
+    NULL,
+};
+static const char* const KW_STATISTIQUE[] = {
+    "statistique", "statistics", "science des donnees", "data science",
+    "mathematiques appliquees", "applied mathematics", "probabilite",
+    "sondage",
+    "\xd8\xa7\xd8\xad\xd8\xb5\xd8\xa7\xd8\xa1",  /* احصاء */
+    "\xd8\xb9\xd9\x84\xd9\x85 \xd8\xa7\xd9\x84\xd8\xa8\xd9\x8a\xd8\xa7\xd9\x86\xd8\xa7\xd8\xaa",  /* علم البيانات */
+    NULL,
+};
+static const char* const KW_PHYSIQUE[] = {
+    "sciences physiques", "physique", "physics", "mathematiques",
+    "mathematics", "analyse", "algebre", "cspm",
+    "\xd9\x81\xd9\x8a\xd8\xb2\xd9\x8a\xd8\xa7\xd8\xa1",  /* فيزياء */
+    "\xd8\xb1\xd9\x8a\xd8\xa7\xd8\xb6\xd9\x8a\xd8\xa7\xd8\xaa",  /* رياضيات */
+    NULL,
+};
+static const char* const KW_LANGUES[] = {
+    "langues", "langue", "francais", "french", "anglais", "english",
+    "delf", "delf b2", "tcf", "cours intensif", "language",
+    "\xd9\x84\xd8\xba\xd8\xa9",  /* لغة */
+    "\xd9\x84\xd8\xba\xd8\xa7\xd8\xaa",  /* لغات */
+    "\xd9\x81\xd8\xb1\xd9\x86\xd8\xb3\xd9\x8a\xd8\xa9",  /* فرنسية */
+    "\xd8\xa7\xd9\x86\xd9\x83\xd9\x84\xd9\x8a\xd8\xb2\xd9\x8a\xd8\xa9",  /* انكليزية */
+    NULL,
+};
+
 static const department_t g_departments[NUM_DEPARTMENTS] = {
-    { "informatique", "Génie Informatique",                  "Informatique",       ALIAS_INFO },
-    { "civil",        "Génie Civil",                        "Génie Civil",        ALIAS_CIVIL },
-    { "electrique",   "Génie Électrique",                   "Génie Électrique",   ALIAS_ELECTRIQUE },
-    { "mecanique",    "Génie Mécanique",                    "Génie Mécanique",    ALIAS_MECANIQUE },
-    { "procedes",     "Génie des Procédés",                  "Génie des Procédés", ALIAS_PROCEDES },
-    { "economie",     "Économie et Gestion",                 "Économie & Gestion", ALIAS_ECONOMIE },
-    { "statistique",  "Statistique et Mathématiques Appliquées", "Statistique",    ALIAS_STATISTIQUE },
-    { "physique",     "Sciences Physiques et Mathématiques", "Sciences Physiques & Maths", ALIAS_PHYSIQUE },
-    { "langues",      "Langues",                             "Langues",            ALIAS_LANGUES },
+    { "informatique", "Génie Informatique",                  "Informatique",              ALIAS_INFO,        KW_INFO },
+    { "civil",        "Génie Civil",                        "Génie Civil",               ALIAS_CIVIL,       KW_CIVIL },
+    { "electrique",   "Génie Électrique",                   "Génie Électrique",          ALIAS_ELECTRIQUE,  KW_ELECTRIQUE },
+    { "mecanique",    "Génie Mécanique",                    "Génie Mécanique",           ALIAS_MECANIQUE,   KW_MECANIQUE },
+    { "procedes",     "Génie des Procédés",                  "Génie des Procédés",        ALIAS_PROCEDES,    KW_PROCEDES },
+    { "economie",     "Économie et Gestion",                 "Économie & Gestion",        ALIAS_ECONOMIE,    KW_ECONOMIE },
+    { "statistique",  "Statistique et Mathématiques Appliquées", "Statistique",            ALIAS_STATISTIQUE, KW_STATISTIQUE },
+    { "physique",     "Sciences Physiques et Mathématiques", "Sciences Physiques & Maths", ALIAS_PHYSIQUE,    KW_PHYSIQUE },
+    { "langues",      "Langues",                             "Langues",                   ALIAS_LANGUES,     KW_LANGUES },
 };
 
 /* Short descriptions used in the AI prompt. Keep them in registry order so
