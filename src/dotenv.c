@@ -39,12 +39,15 @@ static void trim_whitespace(char* str) {
 
 static void strip_quotes(char* str) {
     if (!str || !*str) return;
-    
+
     size_t len = strlen(str);
-    
+    /* Need at least 2 characters for a matching pair; otherwise len-2
+     * underflows to SIZE_MAX and the subsequent memmove clobbers memory. */
+    if (len < 2) return;
+
     /* Check if wrapped in matching quotes */
-    if ((str[0] == '"' && str[len-1] == '"') ||
-        (str[0] == '\'' && str[len-1] == '\'')) {
+    if ((str[0] == '"' && str[len - 1] == '"') ||
+        (str[0] == '\'' && str[len - 1] == '\'')) {
         /* Remove quotes by shifting content left */
         memmove(str, str + 1, len - 2);
         str[len - 2] = '\0';

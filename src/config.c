@@ -49,12 +49,16 @@ static void trim_whitespace(char* str) {
 
 static void strip_quotes(char* str) {
     if (!str || !*str) return;
-    
+
     size_t len = strlen(str);
-    
+    /* Need at least 2 characters for a matching pair; a 1-char string like
+     * "\"" would otherwise make len-2 underflow to SIZE_MAX and cause
+     * memmove to clobber the whole address space. */
+    if (len < 2) return;
+
     /* Check if wrapped in matching quotes */
-    if ((str[0] == '"' && str[len-1] == '"') ||
-        (str[0] == '\'' && str[len-1] == '\'')) {
+    if ((str[0] == '"' && str[len - 1] == '"') ||
+        (str[0] == '\'' && str[len - 1] == '\'')) {
         /* Remove quotes by shifting content left */
         memmove(str, str + 1, len - 2);
         str[len - 2] = '\0';

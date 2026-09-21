@@ -114,15 +114,19 @@ int main(int argc, char* argv[]) {
         err = pipeline_run(&g_pipeline, interval);
     }
     
-    if (err != ISAE_OK && err != ISAE_OK) {
+    /* ISAE_ERR_INTERRUPTED is returned when SIGINT is caught mid-run; we
+     * exit 130 (128 + SIGINT) to mirror the shell convention, not 1. */
+    if (err != ISAE_OK && err != ISAE_ERR_INTERRUPTED) {
         fprintf(stderr, "Pipeline error: %s\n", isae_strerror(err));
         pipeline_cleanup(&g_pipeline);
         return EXIT_FAILURE;
     }
-    
+
     /* Cleanup */
     pipeline_cleanup(&g_pipeline);
-    
-    printf("Goodbye!\n");
+
+    if (err == ISAE_ERR_INTERRUPTED) {
+        return 130;  /* 128 + SIGINT */
+    }
     return EXIT_SUCCESS;
 }
