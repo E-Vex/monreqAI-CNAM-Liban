@@ -1,92 +1,111 @@
-# ISAE Monitor C - GNU Makefile
+# monreqAI-CNAM-Liban (C edition) - GNU Makefile
 
-CC = gcc
-CFLAGS = -std=c11 -Wall -Wextra -Wpedantic -O2 -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE
-DEBUG_FLAGS = -g -O0 -DDEBUG
-INCLUDES = -Iinclude
+PROJECT := monreqai_c
+VERSION := 2.0.0
+TARGET  := isae_monitor
 
-# pkg-config for dependencies
-PKG_CONFIG = pkg-config
-CURL_CFLAGS = $(shell $(PKG_CONFIG) --cflags libcurl)
-CURL_LIBS = $(shell $(PKG_CONFIG) --libs libcurl)
-LIBXML2_CFLAGS = $(shell $(PKG_CONFIG) --cflags libxml-2.0)
-LIBXML2_LIBS = $(shell $(PKG_CONFIG) --libs libxml-2.0)
-CJSON_CFLAGS = $(shell $(PKG_CONFIG) --cflags libcjson)
-CJSON_LIBS = $(shell $(PKG_CONFIG) --libs libcjson)
+CC      ?= gcc
+CFLAGS  ?= -std=c11 -Wall -Wextra -Wpedantic -Wformat=2 -O2 \
+            -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE \
+            -DISAE_VERSION_STRING=\"$(VERSION)\"
+DEBUG_FLAGS := -g -O0 -DDEBUG -fsanitize=address,undefined
+INCLUDES := -Iinclude -Ithird_party/cjson
 
-ALL_CFLAGS = $(CFLAGS) $(INCLUDES) $(CURL_CFLAGS) $(LIBXML2_CFLAGS) $(CJSON_CFLAGS)
-ALL_LIBS = $(CURL_LIBS) $(LIBXML2_LIBS) $(CJSON_LIBS) -lm
+# System dependencies (kept; libcjson is vendored, see third_party/cjson)
+PKG_CONFIG  := pkg-config
+CURL_CFLAGS := $(shell $(PKG_CONFIG) --cflags libcurl 2>/dev/null)
+CURL_LIBS   := $(shell $(PKG_CONFIG) --libs   libcurl 2>/dev/null)
+LIBXML2_CFLAGS := $(shell $(PKG_CONFIG) --cflags libxml-2.0 2>/dev/null)
+LIBXML2_LIBS   := $(shell $(PKG_CONFIG) --libs   libxml-2.0 2>/dev/null)
+
+ALL_CFLAGS := $(CFLAGS) $(INCLUDES) $(CURL_CFLAGS) $(LIBXML2_CFLAGS)
+ALL_LIBS   := $(CURL_LIBS) $(LIBXML2_LIBS) -lm
 
 # Source files
-SRCS = src/main.c \
-       src/departments.c \
-       src/models.c \
-       src/config.c \
-       src/state.c \
-       src/httpclient.c \
-       src/feed.c \
-       src/providers.c \
-       src/keywords.c \
-       src/classifier.c \
-       src/telegram.c \
-       src/pipeline.c \
-       src/dotenv.c
+SRCS := \
+    src/main.c \
+    src/departments.c \
+    src/models.c \
+    src/config.c \
+    src/state.c \
+    src/httpclient.c \
+    src/feed.c \
+    src/providers.c \
+    src/keywords.c \
+    src/classifier.c \
+    src/telegram.c \
+    src/pipeline.c \
+    src/dotenv.c
 
-OBJS = $(SRCS:src/%.c=build/%.o)
-TARGET = isae_monitor
+# Vendored third-party sources (compiled once into build/third_party/)
+VENDOR_SRCS := third_party/cjson/cJSON.c
+
+OBJS       := $(SRCS:src/%.c=build/%.o)
+VENDOR_OBJS := $(VENDOR_SRCS:third_party/%.c=build/third_party/%.o)
 
 # Default target
 all: $(TARGET)
 
-# Create build directory
-build:
-	mkdir -p build
+# Create build directory tree
+build build/third_party:
+	mkdir -p $@
 
 # Link executable
-$(TARGET): $(OBJS)
-	$(CC) $(ALL_CFLAGS) -o $@ $(OBJS) $(ALL_LIBS)
+$(TARGET): $(OBJS) $(VENDOR_OBJS)
+	$(CC) $(ALL_CFLAGS) -o $@ $(OBJS) $(VENDOR_OBJS) $(ALL_LIBS)
 
-# Compile source files
+# Compile project sources
 build/%.o: src/%.c | build
 	$(CC) $(ALL_CFLAGS) -c $< -o $@
 
-# Debug build
+# Compile vendored sources
+build/third_party/%.o: third_party/%.c | build/third_party
+	$(CC) $(ALL_CFLAGS) -c $< -o $@
+
+# Debug build with ASan/UBSan
 debug: CFLAGS += $(DEBUG_FLAGS)
 debug: clean $(TARGET)
 
 # Clean build artifacts
 clean:
-	rm -rf build $(TARGET)
+	rm -rf build $(TARGET) tests/*.out tests/state.* tests/*.json
 
 # Install
 install: $(TARGET)
-	cp $(TARGET) /usr/local/bin/
+	install -d $(DESTDIR)/usr/local/bin
+	install -m 0755 $(TARGET) $(DESTDIR)/usr/local/bin/$(TARGET)
 
 # Uninstall
 uninstall:
-	rm -f /usr/local/bin/$(TARGET)
+	rm -f $(DESTDIR)/usr/local/bin/$(TARGET)
 
-# Run valgrind memory check (requires test setup)
+# Memory check (one-shot run; see tests/ for full parity tests)
 valgrind: $(TARGET)
-	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes ./$(TARGET) --once
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
+	    ./$(TARGET) --once
+
+# Run the test suite
+test: $(TARGET)
+	@cd tests && ./test_parity.sh
 
 # Check dependencies
 check-deps:
 	@echo "Checking dependencies..."
-	@$(PKG_CONFIG) --exists libcurl && echo "✓ libcurl found" || echo "✗ libcurl not found"
-	@$(PKG_CONFIG) --exists libxml-2.0 && echo "✓ libxml2 found" || echo "✗ libxml2 not found"
-	@$(PKG_CONFIG) --exists libcjson && echo "✓ libcjson found" || echo "✗ libcjson not found"
+	@$(PKG_CONFIG) --exists libcurl   && echo "[ok] libcurl   $(shell $(PKG_CONFIG) --modversion libcurl)"   || echo "[!!] libcurl   not found"
+	@$(PKG_CONFIG) --exists libxml-2.0 && echo "[ok] libxml2   $(shell $(PKG_CONFIG) --modversion libxml-2.0)" || echo "[!!] libxml2   not found"
+	@echo "[ok] cJSON     vendored (v1.7.18)"
 
 # Help
 help:
-	@echo "ISAE Monitor C - Makefile Targets:"
+	@echo "$(PROJECT) v$(VERSION) - GNU Make targets:"
 	@echo "  all        - Build the project (default)"
-	@echo "  debug      - Build with debug symbols"
-	@echo "  clean      - Remove build artifacts"
-	@echo "  install    - Install to /usr/local/bin"
-	@echo "  uninstall  - Remove from /usr/local/bin"
-	@echo "  valgrind   - Run memory leak check"
-	@echo "  check-deps - Verify dependencies"
+	@echo "  debug      - Build with -g -O0 -fsanitize=address,undefined"
+	@echo "  clean      - Remove build artifacts and test outputs"
+	@echo "  install    - Install to \$$DESTDIR/usr/local/bin (default /usr/local/bin)"
+	@echo "  uninstall  - Remove from \$$DESTDIR/usr/local/bin"
+	@echo "  valgrind   - Run one-shot under valgrind (no leaks expected)"
+	@echo "  test       - Run tests/test_parity.sh"
+	@echo "  check-deps - Verify libcurl/libxml2 are available"
 	@echo "  help       - Show this help"
 
-.PHONY: all debug clean install uninstall valgrind check-deps help
+.PHONY: all debug clean install uninstall valgrind test check-deps help

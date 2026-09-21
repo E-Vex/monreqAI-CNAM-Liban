@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.10)
-project(isae_monitor VERSION 1.0.0 LANGUAGES C)
+cmake_minimum_required(VERSION 3.13)
+project(isae_monitor VERSION 2.0.0 LANGUAGES C)
 
 # C11 standard
 set(CMAKE_C_STANDARD 11)
@@ -9,22 +9,23 @@ set(CMAKE_C_EXTENSIONS OFF)
 # Compiler warnings
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic -Wformat=2 -Wunused)
-    add_compile_options(-Wstrict-prototypes -Wmissing-prototypes)
+    add_compile_options(-Wstrict-prototypes)
 endif()
 
-# Find required packages
+add_compile_definitions(
+    _POSIX_C_SOURCE=200809L
+    _GNU_SOURCE
+    ISAE_VERSION_STRING="2.0.0"
+)
+
+# Required system packages (libcurl + libxml2).
+# cJSON is vendored under third_party/cjson so the build does not depend on
+# a libcjson -dev package being installed on the host.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(LIBXML2 REQUIRED libxml-2.0)
-pkg_check_modules(CJSON REQUIRED libcjson)
 
-# Include directories
-include_directories(${CMAKE_SOURCE_DIR}/include)
-include_directories(${CURL_INCLUDE_DIRS})
-include_directories(${LIBXML2_INCLUDE_DIRS})
-include_directories(${CJSON_INCLUDE_DIRS})
-
-# Source files
+# Project sources
 set(SOURCES
     src/main.c
     src/departments.c
@@ -38,31 +39,45 @@ set(SOURCES
     src/classifier.c
     src/telegram.c
     src/pipeline.c
+    src/dotenv.c
 )
 
-# Create executable
-add_executable(isae_monitor ${SOURCES})
+# Vendored third-party sources
+set(VENDOR_SOURCES
+    third_party/cjson/cJSON.c
+)
 
-# Link libraries
-target_link_libraries(isae_monitor
+add_executable(isae_monitor ${SOURCES} ${VENDOR_SOURCES})
+
+target_include_directories(isae_monitor PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party/cjson
+    ${CURL_INCLUDE_DIRS}
+    ${LIBXML2_INCLUDE_DIRS}
+)
+
+target_link_libraries(isae_monitor PRIVATE
     ${CURL_LIBRARIES}
     ${LIBXML2_LIBRARIES}
-    ${CJSON_LIBRARIES}
-    m  # Math library
+    m
 )
 
-# Library link directories
 target_link_directories(isae_monitor PRIVATE
     ${CURL_LIBRARY_DIRS}
     ${LIBXML2_LIBRARY_DIRS}
-    ${CJSON_LIBRARY_DIRS}
 )
 
 # Installation
-install(TARGETS isae_monitor DESTINATION bin)
+include(GNUInstallDirs)
+install(TARGETS isae_monitor
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-# Print configuration
-message(STATUS "CURL include dirs: ${CURL_INCLUDE_DIRS}")
-message(STATUS "LibXML2 include dirs: ${LIBXML2_INCLUDE_DIRS}")
-message(STATUS "CJSON include dirs: ${CJSON_INCLUDE_DIRS}")
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+# Configuration summary
+message(STATUS "----------------------------------------------------------")
+message(STATUS "  isae_monitor ${PROJECT_VERSION} (C11)")
+message(STATUS "----------------------------------------------------------")
+message(STATUS "  libcurl   : ${CURL_VERSION} (include: ${CURL_INCLUDE_DIRS})")
+message(STATUS "  libxml2   : ${LIBXML2_VERSION} (include: ${LIBXML2_INCLUDE_DIRS})")
+message(STATUS "  cJSON     : vendored v1.7.18 (third_party/cjson)")
+message(STATUS "  build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "----------------------------------------------------------")

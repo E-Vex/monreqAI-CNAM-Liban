@@ -8,7 +8,7 @@
 
 #include "isae_monitor/telegram.h"
 #include "isae_monitor/httpclient.h"
-#include <cjson/cJSON.h>
+#include <cJSON.h>
 #include <ctype.h>
 
 void telegram_message_init(telegram_message_t* msg) {

@@ -15,7 +15,7 @@
 #include <stdio.h>
 
 /* cJSON is included via pkg-config in build system */
-#include <cjson/cJSON.h>
+#include <cJSON.h>
 
 isae_error_t state_init(state_manager_t* state, const char* file_path) {
     if (!state || !file_path) {
