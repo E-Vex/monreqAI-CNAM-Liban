@@ -164,7 +164,7 @@ static void normalize_alias(const char* in, char* out, size_t cap) {
     }
     size_t w = 0;
     bool in_space_pending = false;
-    for (size_t r = 0; in[r] && w + 1 < cap; r++) {
+    for (size_t r = 0; in[r]; r++) {
         unsigned char c = (unsigned char)in[r];
         if (c == '_' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
             /* collapse runs of whitespace + underscores into a single space,
@@ -173,8 +173,14 @@ static void normalize_alias(const char* in, char* out, size_t cap) {
             continue;
         }
         if (in_space_pending) {
-            if (w + 1 < cap) out[w++] = ' ';
+            /* Need room for the pending space, this char, and the NUL:
+             * indices w and w+1, NUL at w+2. */
+            if (w + 2 >= cap) break;
+            out[w++] = ' ';
             in_space_pending = false;
+        } else if (w + 1 >= cap) {
+            /* Need room for this char and the NUL. */
+            break;
         }
         out[w++] = (char)tolower(c);
     }
