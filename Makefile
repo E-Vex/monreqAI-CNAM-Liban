@@ -67,8 +67,13 @@ build/third_party/%.o: third_party/%.c | build/third_party
 	@mkdir -p $(dir $@)
 	$(CC) $(ALL_CFLAGS) -c $< -o $@
 
-# Debug build with ASan/UBSan
-debug: CFLAGS += $(DEBUG_FLAGS)
+# Debug build with ASan/UBSan.
+# NOTE: appends to ALL_CFLAGS (file origin), NOT CFLAGS: CFLAGS is defined
+# with `?=` which gives it "default" origin, and target-specific `+=` on a
+# default-origin variable is silently ignored by GNU make -- the old
+# `debug: CFLAGS += $(DEBUG_FLAGS)` produced a plain -O2 binary with NO
+# sanitizers while claiming to be instrumented.
+debug: ALL_CFLAGS += $(DEBUG_FLAGS)
 debug: clean $(TARGET)
 
 # Clean build artifacts
