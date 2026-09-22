@@ -577,16 +577,37 @@ isae_error_t strip_html(const char* input, char* output, size_t output_size) {
     }
     stripped[out_idx] = '\0';
 
-    /* Step 3: collapse whitespace into single spaces. */
+    /* Step 3: collapse whitespace into single spaces. Whitespace is
+     * detected at the CODEPOINT level, not the byte level, because
+     * NBSP (U+00A0) is encoded in UTF-8 as the two bytes 0xC2 0xA0.
+     * The previous byte-level check `c == (char)0xA0` matched only the
+     * second byte of NBSP, leaving the lead byte 0xC2 dangling in the
+     * output and producing an invalid UTF-8 sequence (0xC2 0x20) that
+     * Telegram rejects with "text must be encoded in UTF-8". */
     size_t w = 0;
     bool pending_space = false;
-    for (size_t r = 0; r < out_idx && w + 1 < output_size; r++) {
-        char c = stripped[r];
-        if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f' || c == (char)0xA0) {
+    size_t r = 0;
+    while (r < out_idx && w + 4 < output_size) {
+        uint32_t cp = 0;
+        size_t adv = utf8_decode(stripped + r, out_idx - r, &cp);
+        if (adv == 0) {
+            /* Invalid UTF-8 lead byte: emit '?' and resync by one byte. */
+            if (pending_space) { output[w++] = ' '; pending_space = false; }
+            output[w++] = '?';
+            r++;
+            continue;
+        }
+        bool is_ws = (cp == ' '  || cp == '\t' || cp == '\n' || cp == '\r'
+                   || cp == '\v' || cp == '\f' || cp == 0xA0);
+        if (is_ws) {
             if (w > 0) pending_space = true;
+            r += adv;
         } else {
             if (pending_space) { output[w++] = ' '; pending_space = false; }
-            output[w++] = c;
+            if (w + adv >= output_size) break;
+            memcpy(output + w, stripped + r, adv);
+            w += adv;
+            r += adv;
         }
     }
     output[w] = '\0';
