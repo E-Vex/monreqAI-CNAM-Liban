@@ -68,7 +68,14 @@ static size_t codepoint_count(const char* s) {
     if (!s) return 0;
     size_t i = 0, cp = 0;
     while (s[i]) {
-        i += utf8_codepoint_len((unsigned char)s[i]);
+        size_t adv = utf8_codepoint_len((unsigned char)s[i]);
+        /* Don't walk past the NUL: if the sequence is truncated by the
+         * terminator (or by invalid bytes), stop instead of reading past
+         * the end of the buffer. */
+        for (size_t k = 0; k < adv; k++) {
+            if (s[i + k] == '\0') return cp + 1;  /* count the partial cp, stop */
+        }
+        i += adv;
         cp++;
     }
     return cp;
