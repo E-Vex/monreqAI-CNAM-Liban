@@ -85,6 +85,15 @@ static void truncate_utf8(char* s, size_t max_bytes) {
     while (cut > 0 && (unsigned char)s[cut - 1] >= 0x80 && (unsigned char)s[cut - 1] < 0xC0) {
         cut--;
     }
+    /* If the byte just before the cut is a lead byte (>= 0xC0), the
+     * multibyte sequence it starts continues past position cut-1 into
+     * the bytes we're about to discard. Truncating at `cut` would keep
+     * the lead byte without its continuation, producing invalid UTF-8
+     * (e.g. a stray 0xC3 at the end). Walk back one more byte so the
+     * lead byte is excluded too. */
+    if (cut > 0 && (unsigned char)s[cut - 1] >= 0xC0) {
+        cut--;
+    }
     s[cut] = '\0';
 }
 
