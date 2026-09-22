@@ -67,28 +67,49 @@ void pipeline_report_add_classified(pipeline_report_t* r, const char* category) 
 
 char* pipeline_report_render(const pipeline_report_t* r) {
     if (!r) return NULL;
-    /* Allocate generously. */
-    char* buf = (char*)malloc(2048);
+    /* Size the buffer from the actual content instead of a fixed 2048:
+     * the fixed size used to overflow when a run collected 16 long
+     * errors + categories (snprintf's return value made `w` exceed the
+     * buffer size, turning `2048 - w` into a huge size_t and writing
+     * past the heap chunk). */
+    size_t need = 256;
+    for (int i = 0; i < r->category_count; i++) {
+        need += strlen(r->categories_seen[i]) + 40;
+    }
+    for (int i = 0; i < r->error_count; i++) {
+        need += strlen(r->errors[i]) + 8;
+    }
+    char* buf = (char*)malloc(need);
     if (!buf) return NULL;
-    int w = 0;
-    w += snprintf(buf + w, 2048 - w, "Run summary:\n");
-    w += snprintf(buf + w, 2048 - w, "  fetched        : %zu\n", r->fetched);
-    w += snprintf(buf + w, 2048 - w, "  pending        : %zu\n", r->pending);
-    w += snprintf(buf + w, 2048 - w, "  general_sent   : %zu\n", r->general_sent);
-    w += snprintf(buf + w, 2048 - w, "  department_sent: %zu\n", r->department_sent);
-    w += snprintf(buf + w, 2048 - w, "  fallback_used  : %zu\n", r->fallback_used);
+    size_t w = 0;
+    size_t rem = need;
+    int n;
+#define APPEND(...) do { \
+        n = snprintf(buf + w, rem, __VA_ARGS__); \
+        if (n < 0) { free(buf); return NULL; } \
+        if ((size_t)n >= rem) { w += rem > 0 ? rem - 1 : 0; rem = 1; break; } \
+        w += (size_t)n; rem -= (size_t)n; \
+    } while (0)
+
+    APPEND("Run summary:\n");
+    APPEND("  fetched        : %zu\n", r->fetched);
+    APPEND("  pending        : %zu\n", r->pending);
+    APPEND("  general_sent   : %zu\n", r->general_sent);
+    APPEND("  department_sent: %zu\n", r->department_sent);
+    APPEND("  fallback_used  : %zu\n", r->fallback_used);
     if (r->category_count > 0) {
-        w += snprintf(buf + w, 2048 - w, "  classified     :\n");
+        APPEND("  classified     :\n");
         for (int i = 0; i < r->category_count; i++) {
-            w += snprintf(buf + w, 2048 - w, "    %-20s : %d\n", r->categories_seen[i], r->categories_count[i]);
+            APPEND("    %-20s : %d\n", r->categories_seen[i], r->categories_count[i]);
         }
     }
     if (r->error_count > 0) {
-        w += snprintf(buf + w, 2048 - w, "  errors (%d)     :\n", r->error_count);
+        APPEND("  errors (%d)     :\n", r->error_count);
         for (int i = 0; i < r->error_count; i++) {
-            w += snprintf(buf + w, 2048 - w, "    %s\n", r->errors[i]);
+            APPEND("    %s\n", r->errors[i]);
         }
     }
+#undef APPEND
     return buf;
 }
 
