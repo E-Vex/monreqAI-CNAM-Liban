@@ -48,8 +48,18 @@ isae_error_t classifier_classify(classifier_t* classifier,
                                  announcement_t* ann,
                                  classification_result_t* result);
 
-/* Per-run notes (e.g. "gemini key disabled for this run (HTTP 401)").
- * Deduplicated by exact string match. Caller does not own the strings. */
-const char* const* classifier_notes(const classifier_t* classifier, int* count_out);
+int classifier_notes_count(const classifier_t* classifier);
+
+/* Note at the given index (0 <= index < classifier_notes_count()).
+ * Returns NULL when classifier is NULL or index is out of range.
+ * The returned pointer is owned by the classifier and stays valid until
+ * classifier_cleanup().
+ *
+ * NOTE: notes are stored as INLINE char arrays (char[MAX_GEMINI_KEYS+1][256])
+ * inside classifier_t. Never cast the array itself to a pointer array
+ * (e.g. `(const char* const*)classifier->notes`) -- that type confusion
+ * made callers read the first 8 bytes of each note STRING as a pointer,
+ * which was the root cause of the end-of-run segfault in --quiet mode. */
+const char* classifier_note_at(const classifier_t* classifier, int index);
 
 #endif /* ISAE_MONITOR_CLASSIFIER_H */

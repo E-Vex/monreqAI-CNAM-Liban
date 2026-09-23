@@ -368,11 +368,17 @@ isae_error_t pipeline_run(pipeline_t* pipeline) {
         }
     }
 
-    /* Surface classifier notes (dead keys, etc) as errors in the report. */
-    int notes_count = 0;
-    const char* const* notes = classifier_notes(&pipeline->classifier, &notes_count);
+    /* Surface classifier notes (dead keys, etc) as errors in the report.
+     * Fetch notes by index -- the notes are inline char arrays inside the
+     * classifier, NOT an array of pointers. The old code cast
+     * classifier->notes to `const char* const*` and read notes[i] as a
+     * pointer, so the first 8 bytes of the note STRING ("gemini k" ->
+     * 0x6b20696e696d6567) were dereferenced by strncpy in
+     * pipeline_report_add_error() -> SIGSEGV at the end of the run. */
+    int notes_count = classifier_notes_count(&pipeline->classifier);
     for (int i = 0; i < notes_count; i++) {
-        pipeline_report_add_error(&pipeline->report, notes[i]);
+        const char* note = classifier_note_at(&pipeline->classifier, i);
+        if (note) pipeline_report_add_error(&pipeline->report, note);
     }
 
     feed_result_cleanup(&feed);

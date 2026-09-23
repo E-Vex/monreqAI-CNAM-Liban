@@ -60,10 +60,15 @@ static void classifier_note(classifier_t* classifier, const char* message) {
     classifier->notes_count++;
 }
 
-const char* const* classifier_notes(const classifier_t* classifier, int* count_out) {
-    if (count_out) *count_out = classifier ? classifier->notes_count : 0;
-    /* The notes array is not NULL-terminated; callers must use count_out. */
-    return (const char* const*)classifier->notes;
+int classifier_notes_count(const classifier_t* classifier) {
+    return classifier ? classifier->notes_count : 0;
+}
+
+const char* classifier_note_at(const classifier_t* classifier, int index) {
+    if (!classifier || index < 0 || index >= classifier->notes_count) return NULL;
+    /* notes_count is bounded by the array size in classifier_note(), so a
+     * non-negative index below notes_count is always in range here. */
+    return classifier->notes[index];
 }
 
 static bool is_gemini_dead_status(long status) {
