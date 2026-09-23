@@ -79,12 +79,13 @@ static isae_error_t parse_line(const char* line, char* key, size_t key_size,
         return ISAE_ERR_INVALID_PARAM;
     }
     
-    /* Extract key */
+    /* Extract key. memcpy + explicit NUL: strncpy would zero-pad and
+     * trigger -Wstringop-truncation when key_len == key_size - 1. */
     size_t key_len = (size_t)(eq - p);
     if (key_len >= key_size) {
         key_len = key_size - 1;
     }
-    strncpy(key, p, key_len);
+    memcpy(key, p, key_len);
     key[key_len] = '\0';
     trim_whitespace(key);
     
@@ -141,11 +142,14 @@ isae_error_t dotenv_load(dotenv_t* env, const char* path) {
             continue;  /* Skip invalid lines */
         }
 
-        /* Store the variable */
-        strncpy(env->vars[env->count].key, key, MAX_ENV_LINE_LEN - 1);
-        env->vars[env->count].key[MAX_ENV_LINE_LEN - 1] = '\0';
-        strncpy(env->vars[env->count].value, value, MAX_ENV_LINE_LEN - 1);
-        env->vars[env->count].value[MAX_ENV_LINE_LEN - 1] = '\0';
+        /* Store the variable (memcpy + explicit NUL; strncpy trips
+         * -Wstringop-truncation on full-length values). */
+        size_t klen = strnlen(key, MAX_ENV_LINE_LEN - 1);
+        memcpy(env->vars[env->count].key, key, klen);
+        env->vars[env->count].key[klen] = '\0';
+        size_t vlen = strnlen(value, MAX_ENV_LINE_LEN - 1);
+        memcpy(env->vars[env->count].value, value, vlen);
+        env->vars[env->count].value[vlen] = '\0';
         env->count++;
     }
 
