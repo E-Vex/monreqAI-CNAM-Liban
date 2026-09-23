@@ -113,7 +113,7 @@ isae_error_t classifier_classify(classifier_t* classifier,
                                                   s->gemini_model,
                                                   &classifier->http_cfg, &ai);
         if (err != ISAE_OK) {
-            snprintf(last_error, sizeof(last_error) - 1, "gemini: %s", ai.error);
+            snprintf(last_error, sizeof(last_error), "gemini: %.247s", ai.error);
             if (is_gemini_dead_status(ai.status)) {
                 classifier->gemini_dead[i] = true;
                 char note[300];
@@ -146,7 +146,7 @@ isae_error_t classifier_classify(classifier_t* classifier,
                                                      s->openrouter_model,
                                                      &classifier->http_cfg, &ai);
         if (err != ISAE_OK) {
-            snprintf(last_error, sizeof(last_error) - 1, "openrouter: %s", ai.error);
+            snprintf(last_error, sizeof(last_error), "openrouter: %.243s", ai.error);
             if (is_openrouter_dead_status(ai.status)) {
                 classifier->openrouter_dead = true;
                 char note[300];

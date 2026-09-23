@@ -45,8 +45,11 @@ void pipeline_report_init(pipeline_report_t* r) {
 void pipeline_report_add_error(pipeline_report_t* r, const char* msg) {
     if (!r || !msg) return;
     if (r->error_count >= (int)(sizeof(r->errors) / sizeof(r->errors[0]))) return;
-    strncpy(r->errors[r->error_count], msg, sizeof(r->errors[0]) - 1);
-    r->errors[r->error_count][sizeof(r->errors[0]) - 1] = '\0';
+    /* memcpy + explicit NUL (strncpy trips -Wstringop-truncation when the
+     * message is exactly sizeof(errors[0]) - 1 bytes long). */
+    size_t n = strnlen(msg, sizeof(r->errors[0]) - 1);
+    memcpy(r->errors[r->error_count], msg, n);
+    r->errors[r->error_count][n] = '\0';
     r->error_count++;
 }
 
