@@ -28,6 +28,9 @@ target/
 seen.json
 seen.json.corrupt
 
+# WhatsApp sidecar session credentials (NEVER commit)
+whatsapp-service/auth/
+
 # Environment
 .env
 .env.local
