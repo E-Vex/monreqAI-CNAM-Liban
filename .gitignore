@@ -6,7 +6,7 @@
 *.so
 *.dll
 *.exe
-isae_monitor
+/isae_monitor
 
 # Dependencies
 node_modules/
