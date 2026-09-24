@@ -30,6 +30,11 @@ typedef struct {
     char telegram_channel_general[MAX_CHAT_ID_LEN];   /* TELEGRAM_CHANNEL_GENERAL */
     char department_channels[NUM_DEPARTMENTS][MAX_CHAT_ID_LEN]; /* per-department TELEGRAM_CHANNEL_<KEY> */
 
+    /* WhatsApp Channel sidecar (optional; general category only) */
+    char whatsapp_service_url[MAX_URL_LEN];           /* WHATSAPP_SERVICE_URL */
+    char whatsapp_shared_secret[MAX_API_KEY_LEN];     /* WHATSAPP_SHARED_SECRET */
+    char whatsapp_channel_jid[MAX_CHAT_ID_LEN];       /* WHATSAPP_CHANNEL_JID (read by the sidecar; shown by --check) */
+
     /* HTTP client */
     int  request_timeout;                             /* REQUEST_TIMEOUT (seconds) */
     int  max_retries;                                 /* MAX_RETRIES */
@@ -57,6 +62,7 @@ isae_error_t config_load(settings_t* settings);
 /* Derived properties (mirror Python). */
 bool config_has_ai(const settings_t* settings);
 bool config_has_telegram(const settings_t* settings);
+bool config_has_whatsapp(const settings_t* settings);
 
 /* Return the department channel for a category, or NULL if not configured.
  * Accepts canonical keys, "general", "other" (the latter two always return NULL). */
