@@ -34,6 +34,7 @@ SRCS := \
     src/keywords.c \
     src/classifier.c \
     src/telegram.c \
+    src/whatsapp.c \
     src/pipeline.c \
     src/dotenv.c
 
