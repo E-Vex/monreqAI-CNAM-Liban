@@ -154,6 +154,7 @@ int main(int argc, char* argv[]) {
     g_pipeline->settings.quiet = quiet;
     /* Propagate dry_run to the Telegram client. */
     g_pipeline->telegram.dry_run = dry_run;
+    g_pipeline->whatsapp.dry_run = dry_run;
 
     /* Verbose timestamp + warnings. */
     if (!quiet) {

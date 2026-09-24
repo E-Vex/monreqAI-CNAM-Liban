@@ -98,6 +98,7 @@ char* pipeline_report_render(const pipeline_report_t* r) {
     APPEND("  fetched        : %zu\n", r->fetched);
     APPEND("  pending        : %zu\n", r->pending);
     APPEND("  general_sent   : %zu\n", r->general_sent);
+    if (r->whatsapp_sent > 0) APPEND("  whatsapp_sent  : %zu\n", r->whatsapp_sent);
     APPEND("  department_sent: %zu\n", r->department_sent);
     APPEND("  fallback_used  : %zu\n", r->fallback_used);
     if (r->category_count > 0) {
@@ -147,6 +148,12 @@ isae_error_t pipeline_init(pipeline_t* pipeline) {
                          &http_cfg,
                          pipeline->settings.send_interval,
                          pipeline->settings.dry_run);
+
+    whatsapp_client_init(&pipeline->whatsapp,
+                         pipeline->settings.whatsapp_service_url,
+                         pipeline->settings.whatsapp_shared_secret,
+                         &http_cfg,
+                         pipeline->settings.dry_run);
     return ISAE_OK;
 }
 
@@ -156,6 +163,7 @@ void pipeline_cleanup(pipeline_t* pipeline) {
     (void)state_save(&pipeline->state);
     classifier_cleanup(&pipeline->classifier);
     telegram_client_cleanup(&pipeline->telegram);
+    whatsapp_client_cleanup(&pipeline->whatsapp);
     state_cleanup(&pipeline->state);
 }
 
@@ -273,6 +281,20 @@ static isae_error_t process_pending(pipeline_t* pipeline, const feed_entry_t* en
                     /* c stays NULL; re-classify next run. */
                 }
                 free(msg);
+            }
+        }
+        /* WhatsApp Channel (general category only). Sent once per
+         * announcement, at the moment it is marked classified, so a later
+         * run never re-posts it. Non-fatal: a failure is logged, never added
+         * to the report's errors, and cannot affect Telegram or the state. */
+        if (delivered && strcmp(result.category, CATEGORY_GENERAL) == 0 &&
+            whatsapp_client_enabled(&pipeline->whatsapp)) {
+            char* wa_msg = whatsapp_format_message(&ann);
+            if (wa_msg) {
+                if (send_to_whatsapp_channel(&pipeline->whatsapp, wa_msg)) {
+                    r->whatsapp_sent++;
+                }
+                free(wa_msg);
             }
         }
         if (delivered) {

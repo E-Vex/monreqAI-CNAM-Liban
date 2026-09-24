@@ -6,6 +6,7 @@
 #include "state.h"
 #include "classifier.h"
 #include "telegram.h"
+#include "whatsapp.h"
 #include "feed.h"
 #include <signal.h>
 
@@ -14,6 +15,7 @@ typedef struct {
     size_t fetched;
     size_t pending;
     size_t general_sent;
+    size_t whatsapp_sent;
     size_t department_sent;
     size_t fallback_used;
     /* Per-category count of classified announcements. */
@@ -37,6 +39,7 @@ typedef struct {
     state_manager_t state;
     classifier_t classifier;
     telegram_client_t telegram;
+    whatsapp_client_t whatsapp;
     pipeline_report_t report;
     volatile sig_atomic_t interrupted;
 } pipeline_t;
