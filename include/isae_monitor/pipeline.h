@@ -16,6 +16,7 @@ typedef struct {
     size_t pending;
     size_t general_sent;
     size_t whatsapp_sent;
+    size_t whatsapp_group_sent;
     size_t department_sent;
     size_t fallback_used;
     /* Per-category count of classified announcements. */

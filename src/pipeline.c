@@ -99,6 +99,7 @@ char* pipeline_report_render(const pipeline_report_t* r) {
     APPEND("  pending        : %zu\n", r->pending);
     APPEND("  general_sent   : %zu\n", r->general_sent);
     if (r->whatsapp_sent > 0) APPEND("  whatsapp_sent  : %zu\n", r->whatsapp_sent);
+    if (r->whatsapp_group_sent > 0) APPEND("  whatsapp_group_sent: %zu\n", r->whatsapp_group_sent);
     APPEND("  department_sent: %zu\n", r->department_sent);
     APPEND("  fallback_used  : %zu\n", r->fallback_used);
     if (r->category_count > 0) {
@@ -295,6 +296,24 @@ static isae_error_t process_pending(pipeline_t* pipeline, const feed_entry_t* en
                     r->whatsapp_sent++;
                 }
                 free(wa_msg);
+            }
+        }
+        /* WhatsApp Group (general category by default; this is a default,
+         * not a spec -- see the PR description). Independent of the Channel
+         * block above: either can fail or be disabled without affecting
+         * the other or Telegram. The message body is identical to the
+         * Channel's, so we *could* reuse wa_msg -- but the two blocks are
+         * kept separate (each formats + frees its own copy) to stay
+         * self-contained and readable. */
+        if (delivered && strcmp(result.category, CATEGORY_GENERAL) == 0 &&
+            whatsapp_client_enabled(&pipeline->whatsapp) &&
+            config_has_whatsapp_group(s)) {
+            char* wa_group_msg = whatsapp_format_message(&ann);
+            if (wa_group_msg) {
+                if (send_to_whatsapp_group(&pipeline->whatsapp, wa_group_msg)) {
+                    r->whatsapp_group_sent++;
+                }
+                free(wa_group_msg);
             }
         }
         if (delivered) {
