@@ -14,6 +14,7 @@ const HOST = '127.0.0.1' // never exposed externally
 const PORT = Number(process.env.PORT ?? 3100)
 const SECRET = process.env.WHATSAPP_SHARED_SECRET ?? ''
 const CHANNEL_JID = process.env.WHATSAPP_CHANNEL_JID ?? ''
+const GROUP_JID = process.env.WHATSAPP_GROUP_JID ?? ''
 const PAIRING_PHONE = (process.env.WHATSAPP_PAIRING_PHONE ?? '').replace(/\D/g, '')
 const AUTH_DIR = 'auth'
 const MAX_TEXT = 8000
@@ -22,8 +23,19 @@ if (!SECRET) {
   log('ERROR', 'WHATSAPP_SHARED_SECRET is not set; refusing to start.')
   process.exit(1)
 }
-if (!/^[0-9]+@newsletter$/.test(CHANNEL_JID)) {
+// Each target is independently optional: a missing target simply disables
+// its endpoint with a 503; a *malformed* target refuses to start. This
+// way an operator can configure channel-only, group-only, or both.
+if (CHANNEL_JID && !/^[0-9]+@newsletter$/.test(CHANNEL_JID)) {
   log('ERROR', 'WHATSAPP_CHANNEL_JID must look like <id>@newsletter; refusing to start.')
+  process.exit(1)
+}
+if (GROUP_JID && !/^[0-9]+(-[0-9]+)?@g\.us$/.test(GROUP_JID)) {
+  log('ERROR', 'WHATSAPP_GROUP_JID must look like <id>@g.us (or <id>-<id>@g.us); refusing to start.')
+  process.exit(1)
+}
+if (!CHANNEL_JID && !GROUP_JID) {
+  log('ERROR', 'Neither WHATSAPP_CHANNEL_JID nor WHATSAPP_GROUP_JID is set; refusing to start.')
   process.exit(1)
 }
 
@@ -73,6 +85,28 @@ async function connect(): Promise<void> {
       connected = true
       loggedOut = false
       pairingRequested = false
+      // Diagnostic only: probe the group's metadata so the failure mode
+      // ("account not a member" / "group is admins-only") is legible in
+      // the log instead of surfacing as a bare Baileys error on the first
+      // send. Never blocks sends -- metadata can be transiently
+      // unavailable right after reconnecting.
+      if (GROUP_JID) {
+        s.groupMetadata(GROUP_JID).then((meta) => {
+          if (!meta) {
+            log('WARN', `group ${GROUP_JID}: no metadata returned (account may not be a participant)`)
+            return
+          }
+          const me = s.user?.id ?? ''
+          const participant = (meta.participants ?? []).some((p) => p.id === me)
+          const announce = meta.announce === true
+          log('INFO', `group ${GROUP_JID}: subject="${meta.subject ?? ''}", participant=${participant ? 'yes' : 'NO'}, announce=${announce ? 'yes (admins-only)' : 'no'}`)
+          if (!participant) {
+            log('WARN', `group ${GROUP_JID}: the paired account is NOT a participant; sends will fail. Add the number to the group manually (Baileys cannot join on its own).`)
+          }
+        }).catch((e: unknown) => {
+          log('WARN', `group ${GROUP_JID}: metadata lookup failed: ${(e as Error).message}`)
+        })
+      }
     } else if (connection === 'close') {
       connected = false
       const code = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode
@@ -100,30 +134,60 @@ const app = express()
 app.disable('x-powered-by')
 app.use(express.json({ limit: '64kb' }))
 
-app.post('/send-channel-message', async (req, res) => {
+// Shared send handler. The JID is resolved up front (one of CHANNEL_JID /
+// GROUP_JID), so the only target-specific thing here is the label used in
+// log lines. Baileys' sendMessage is JID-type-agnostic, so the wire call
+// is identical for channel vs group.
+async function handleSend(
+  req: express.Request,
+  res: express.Response,
+  target: string,
+  jid: string
+): Promise<void> {
   if (!secretMatches(req.header('X-Internal-Secret'))) {
-    log('WARN', 'send rejected: bad or missing X-Internal-Secret')
-    return res.status(401).json({ success: false, error: 'unauthorized' })
+    log('WARN', `send rejected: bad or missing X-Internal-Secret (${target})`)
+    res.status(401).json({ success: false, error: 'unauthorized' })
+    return
   }
   const text = req.body?.text
   if (typeof text !== 'string' || !text.trim() || text.length > MAX_TEXT) {
-    log('WARN', 'send rejected: invalid "text"')
-    return res.status(400).json({ success: false, error: 'body must be {"text": non-empty string}' })
+    log('WARN', `send rejected: invalid "text" (${target})`)
+    res.status(400).json({ success: false, error: 'body must be {"text": non-empty string}' })
+    return
   }
   if (!sock || !connected) {
     const error = loggedOut ? 'whatsapp session logged out; re-pair required' : 'whatsapp not connected'
-    log('ERROR', `send failed: ${error}`)
-    return res.status(503).json({ success: false, error })
+    log('ERROR', `send failed (${target}): ${error}`)
+    res.status(503).json({ success: false, error })
+    return
   }
   try {
-    const sent = await sock.sendMessage(CHANNEL_JID, { text })
-    log('INFO', `send OK to ${CHANNEL_JID} (${text.length} chars, id ${sent?.key?.id ?? 'n/a'})`)
-    return res.json({ success: true, id: sent?.key?.id ?? null })
+    const sent = await sock.sendMessage(jid, { text })
+    log('INFO', `send OK to ${jid} (${text.length} chars, id ${sent?.key?.id ?? 'n/a'})`)
+    res.json({ success: true, id: sent?.key?.id ?? null })
   } catch (err) {
     const error = (err as Error).message
-    log('ERROR', `send failed: ${error}`)
-    return res.status(502).json({ success: false, error })
+    log('ERROR', `send failed (${target}): ${error}`)
+    res.status(502).json({ success: false, error })
   }
+}
+
+app.post('/send-channel-message', (req, res) => {
+  if (!CHANNEL_JID) {
+    log('WARN', 'send rejected: whatsapp channel not configured')
+    res.status(503).json({ success: false, error: 'whatsapp channel not configured' })
+    return
+  }
+  void handleSend(req, res, 'channel', CHANNEL_JID)
+})
+
+app.post('/send-group-message', (req, res) => {
+  if (!GROUP_JID) {
+    log('WARN', 'send rejected: whatsapp group not configured')
+    res.status(503).json({ success: false, error: 'whatsapp group not configured' })
+    return
+  }
+  void handleSend(req, res, 'group', GROUP_JID)
 })
 
 app.listen(PORT, HOST, () => log('INFO', `listening on http://${HOST}:${PORT}`))
