@@ -214,6 +214,7 @@ The binary reads configuration in this order (later wins):
 | `WHATSAPP_SERVICE_URL`         | (unset)                                                             | Optional. Local [whatsapp-service](whatsapp-service/README.md) URL, e.g. `http://127.0.0.1:3100`. Empty disables WhatsApp. |
 | `WHATSAPP_SHARED_SECRET`       | (unset)                                                             | Optional. Shared with the sidecar; sent as `X-Internal-Secret`. |
 | `WHATSAPP_CHANNEL_JID`         | (unset)                                                             | Read by the sidecar (`<id>@newsletter`); shown by `--check`. |
+| `WHATSAPP_GROUP_JID`           | (unset)                                                             | Read by the sidecar (`<id>@g.us` or `<id>-<id>@g.us`); shown by `--check`. The paired number must already be a member of the group. |
 | `REQUEST_TIMEOUT`              | `20`                                                                | Seconds. Applies to all HTTP calls (feed, Gemini, OpenRouter, Telegram). |
 | `MAX_RETRIES`                  | `3`                                                                 | Total attempts. Retries on network errors and `{408, 425, 429, 500, 502, 503, 504}`. |
 | `SEND_INTERVAL`                | `1.2`                                                               | Minimum seconds between two Telegram sends (per-bot throttle, `CLOCK_MONOTONIC`). |
