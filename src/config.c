@@ -208,6 +208,11 @@ isae_error_t config_load(settings_t* settings) {
         copy_value(settings->whatsapp_channel_jid, sizeof(settings->whatsapp_channel_jid), v);
         strip_quotes(settings->whatsapp_channel_jid);
     }
+    v = getenv("WHATSAPP_GROUP_JID");
+    if (v && *v) {
+        copy_value(settings->whatsapp_group_jid, sizeof(settings->whatsapp_group_jid), v);
+        strip_quotes(settings->whatsapp_group_jid);
+    }
 
     /* Per-department channels via the departments_env_var() lookup.
      * This keeps the canonical-key -> env-var mapping in one place. */
@@ -267,6 +272,11 @@ bool config_has_whatsapp(const settings_t* settings) {
     return settings->whatsapp_service_url[0] && settings->whatsapp_shared_secret[0];
 }
 
+bool config_has_whatsapp_group(const settings_t* settings) {
+    if (!settings) return false;
+    return settings->whatsapp_group_jid[0] != '\0';
+}
+
 const char* config_dept_channel(const settings_t* settings, const char* category) {
     if (!settings || !category) return NULL;
     if (strcmp(category, CATEGORY_GENERAL) == 0) return settings->telegram_channel_general[0] ? settings->telegram_channel_general : NULL;
@@ -303,6 +313,7 @@ char* config_summary(const settings_t* s) {
     w += snprintf(buf + w, 4096 - w, "  WHATSAPP_SERVICE_URL: %s\n", s->whatsapp_service_url[0] ? s->whatsapp_service_url : "(not set)");
     w += snprintf(buf + w, 4096 - w, "  WHATSAPP_SECRET     : %s\n", s->whatsapp_shared_secret[0] ? "set" : "(not set)");
     w += snprintf(buf + w, 4096 - w, "  WHATSAPP_CHANNEL_JID: %s\n", s->whatsapp_channel_jid[0] ? s->whatsapp_channel_jid : "(not set)");
+    w += snprintf(buf + w, 4096 - w, "  WHATSAPP_GROUP_JID  : %s\n", s->whatsapp_group_jid[0] ? s->whatsapp_group_jid : "(not set)");
     w += snprintf(buf + w, 4096 - w, "  REQUEST_TIMEOUT     : %d s\n", s->request_timeout);
     w += snprintf(buf + w, 4096 - w, "  MAX_RETRIES         : %d\n", s->max_retries);
     w += snprintf(buf + w, 4096 - w, "  SEND_INTERVAL       : %.2f s\n", s->send_interval);
@@ -317,7 +328,7 @@ void config_problems(const settings_t* s, config_problem_cb cb, void* user_data)
     if (s->telegram_bot_token[0] && !s->telegram_channel_general[0] && !config_has_telegram(s)) {
         cb("TELEGRAM_BOT_TOKEN is set but no channel is configured -- notifications will be skipped.", user_data);
     }
-    if ((s->whatsapp_shared_secret[0] || s->whatsapp_channel_jid[0]) && !config_has_whatsapp(s)) {
+    if ((s->whatsapp_shared_secret[0] || s->whatsapp_channel_jid[0] || s->whatsapp_group_jid[0]) && !config_has_whatsapp(s)) {
         cb("WhatsApp is partly configured: WHATSAPP_SERVICE_URL and WHATSAPP_SHARED_SECRET must both be set -- WhatsApp delivery is disabled.", user_data);
     }
     if (!s->telegram_bot_token[0] && s->telegram_channel_general[0]) {
