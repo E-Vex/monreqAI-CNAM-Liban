@@ -5,12 +5,18 @@
 #include "models.h"
 #include "httpclient.h"
 
-/* Maximum characters (codepoints) of a WhatsApp Channel message. */
+/* Maximum characters (codepoints) of a WhatsApp message.
+ * Applies to both the Channel and the Group target. */
 #define WHATSAPP_MAX_MESSAGE 3900
 
 /* Client for the local whatsapp-service/ Node sidecar (Baileys).
  * The service is OPTIONAL: when service_url or shared_secret is empty the
- * client is "disabled" and every send is a silent no-op. */
+ * client is "disabled" and every send is a silent no-op.
+ *
+ * The service_url / shared_secret pair is shared by every target (channel,
+ * group). Per-target enablement is decided by the caller (the pipeline),
+ * which checks config_has_whatsapp_channel / config_has_whatsapp_group to
+ * know whether each endpoint is wired up on the Node side. */
 typedef struct {
     char service_url[MAX_URL_LEN];      /* e.g. http://127.0.0.1:3100 */
     char shared_secret[MAX_API_KEY_LEN];
@@ -24,7 +30,8 @@ void whatsapp_client_init(whatsapp_client_t* wa, const char* service_url,
                           bool dry_run);
 void whatsapp_client_cleanup(whatsapp_client_t* wa);
 
-/* True when service URL, shared secret are both set. */
+/* True when service URL, shared secret are both set. Shared by every target
+ * (channel, group): the sidecar itself is either up or down, not per-target. */
 bool whatsapp_client_enabled(const whatsapp_client_t* wa);
 
 /* Format an announcement as plain text (WhatsApp *bold* for the title):
@@ -45,5 +52,11 @@ char* whatsapp_format_message(const announcement_t* ann);
  * logged to stderr and false is returned. Sends are NOT retried (a retry
  * after a timeout could post the same message twice). */
 bool send_to_whatsapp_channel(whatsapp_client_t* wa, const char* text);
+
+/* POST {"text": ...} to <service_url>/send-group-message with the
+ * X-Internal-Secret header. Same non-fatal / no-retry semantics as
+ * send_to_whatsapp_channel. Independent of the channel send: a failure
+ * here never affects the channel target or Telegram. */
+bool send_to_whatsapp_group(whatsapp_client_t* wa, const char* text);
 
 #endif /* ISAE_MONITOR_WHATSAPP_H */

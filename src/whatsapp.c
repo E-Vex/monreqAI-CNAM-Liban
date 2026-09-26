@@ -1,9 +1,14 @@
 /**
- * ISAE Monitor - WhatsApp Channel client
+ * ISAE Monitor - WhatsApp client (Channel + Group)
  *
  * Thin client for the local whatsapp-service/ sidecar (Node + Baileys).
  * Every failure is non-fatal: it is logged and reported as `false` so the
  * Telegram delivery and the rest of the run are never affected.
+ *
+ * Two targets share one sidecar URL/secret: a Channel (`/send-channel-message`)
+ * and a Group (`/send-group-message`). They are independent -- one failing
+ * must not affect the other. The shared HTTP logic lives in `whatsapp_post`;
+ * each public wrapper just picks a path.
  */
 
 #include "isae_monitor/whatsapp.h"
@@ -13,7 +18,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define WHATSAPP_SEND_PATH "/send-channel-message"
+#define WHATSAPP_CHANNEL_SEND_PATH "/send-channel-message"
+#define WHATSAPP_GROUP_SEND_PATH   "/send-group-message"
 #define WHATSAPP_TIMEOUT_MIN 20
 
 static void copy_str(char* dst, size_t dst_size, const char* src) {
@@ -98,12 +104,18 @@ char* whatsapp_format_message(const announcement_t* ann) {
     return out;
 }
 
-bool send_to_whatsapp_channel(whatsapp_client_t* wa, const char* text) {
-    if (!wa || !text || !text[0]) return false;
+/* Shared send: POST {"text": ...} to <service_url><path> with the
+ * X-Internal-Secret header. `label` is used only for dry-run output and
+ * log lines so the operator can tell the two targets apart. Returns true
+ * on success; on any failure the error is logged and false is returned.
+ * Never retried (a retry after a timeout could double-post). */
+static bool whatsapp_post(whatsapp_client_t* wa, const char* path,
+                          const char* label, const char* text) {
+    if (!wa || !text || !text[0] || !path || !label) return false;
     if (!whatsapp_client_enabled(wa)) return false;
 
     if (wa->dry_run) {
-        printf("    [dry-run] -> WhatsApp channel\n");
+        printf("    [dry-run] -> WhatsApp %s\n", label);
         const char* p = text;
         const char* nl;
         while ((nl = strchr(p, '\n'))) {
@@ -115,16 +127,16 @@ bool send_to_whatsapp_channel(whatsapp_client_t* wa, const char* text) {
     }
 
     char url[MAX_URL_LEN + 64];
-    int un = snprintf(url, sizeof(url), "%s%s", wa->service_url, WHATSAPP_SEND_PATH);
+    int un = snprintf(url, sizeof(url), "%s%s", wa->service_url, path);
     if (un < 0 || (size_t)un >= sizeof(url)) {
-        fprintf(stderr, "WhatsApp send skipped: WHATSAPP_SERVICE_URL too long\n");
+        fprintf(stderr, "WhatsApp %s send skipped: WHATSAPP_SERVICE_URL too long\n", label);
         return false;
     }
 
     char header[MAX_API_KEY_LEN + 32];
     int hn = snprintf(header, sizeof(header), "X-Internal-Secret: %s", wa->shared_secret);
     if (hn < 0 || (size_t)hn >= sizeof(header)) {
-        fprintf(stderr, "WhatsApp send skipped: WHATSAPP_SHARED_SECRET too long\n");
+        fprintf(stderr, "WhatsApp %s send skipped: WHATSAPP_SHARED_SECRET too long\n", label);
         return false;
     }
     const char* headers[] = { header, NULL };
@@ -149,15 +161,23 @@ bool send_to_whatsapp_channel(whatsapp_client_t* wa, const char* text) {
             ok = true;
         } else {
             cJSON* e = parsed ? cJSON_GetObjectItem(parsed, "error") : NULL;
-            fprintf(stderr, "WhatsApp send failed: %s\n",
+            fprintf(stderr, "WhatsApp %s send failed: %s\n", label,
                     (e && cJSON_IsString(e)) ? e->valuestring : "unexpected response");
         }
         cJSON_Delete(parsed);
     } else {
-        fprintf(stderr, "WhatsApp send failed (%s, HTTP %ld): %s\n",
-                isae_strerror(err), resp.status_code,
+        fprintf(stderr, "WhatsApp %s send failed (%s, HTTP %ld): %s\n",
+                label, isae_strerror(err), resp.status_code,
                 resp.body ? resp.body : "service unreachable");
     }
     http_response_cleanup(&resp);
     return ok;
+}
+
+bool send_to_whatsapp_channel(whatsapp_client_t* wa, const char* text) {
+    return whatsapp_post(wa, WHATSAPP_CHANNEL_SEND_PATH, "channel", text);
+}
+
+bool send_to_whatsapp_group(whatsapp_client_t* wa, const char* text) {
+    return whatsapp_post(wa, WHATSAPP_GROUP_SEND_PATH, "group", text);
 }
