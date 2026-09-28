@@ -289,7 +289,8 @@ static isae_error_t process_pending(pipeline_t* pipeline, const feed_entry_t* en
          * run never re-posts it. Non-fatal: a failure is logged, never added
          * to the report's errors, and cannot affect Telegram or the state. */
         if (delivered && strcmp(result.category, CATEGORY_GENERAL) == 0 &&
-            whatsapp_client_enabled(&pipeline->whatsapp)) {
+            whatsapp_client_enabled(&pipeline->whatsapp) &&
+            config_has_whatsapp_channel(s)) {
             char* wa_msg = whatsapp_format_message(&ann);
             if (wa_msg) {
                 if (send_to_whatsapp_channel(&pipeline->whatsapp, wa_msg)) {

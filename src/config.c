@@ -272,6 +272,11 @@ bool config_has_whatsapp(const settings_t* settings) {
     return settings->whatsapp_service_url[0] && settings->whatsapp_shared_secret[0];
 }
 
+bool config_has_whatsapp_channel(const settings_t* settings) {
+    if (!settings) return false;
+    return settings->whatsapp_channel_jid[0] != '\0';
+}
+
 bool config_has_whatsapp_group(const settings_t* settings) {
     if (!settings) return false;
     return settings->whatsapp_group_jid[0] != '\0';

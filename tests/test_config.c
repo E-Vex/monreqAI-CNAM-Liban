@@ -1,4 +1,4 @@
-/* tests/test_config.c -- config_has_whatsapp_group predicate.
+/* tests/test_config.c -- config_has_whatsapp_group / _channel predicates.
  *
  * Build:
  *   gcc -std=c11 -Wall -Wextra -Wpedantic -Wformat=2 -O2 \
@@ -32,6 +32,7 @@ int main(void) {
     memset(&s, 0, sizeof(s));
     config_load(&s);
     CHECK(!config_has_whatsapp_group(&s), "group: false when WHATSAPP_GROUP_JID unset");
+    CHECK(!config_has_whatsapp_channel(&s), "channel: false when WHATSAPP_CHANNEL_JID unset");
     CHECK(!config_has_whatsapp(&s), "sidecar: not configured when all WHATSAPP_* unset");
 
     /* Set just the group JID. */
@@ -39,6 +40,7 @@ int main(void) {
     memset(&s, 0, sizeof(s));
     config_load(&s);
     CHECK(config_has_whatsapp_group(&s), "group: true when WHATSAPP_GROUP_JID set");
+    CHECK(!config_has_whatsapp_channel(&s), "channel: false when only group JID is set");
     CHECK(!config_has_whatsapp(&s), "sidecar: still not configured when only JID is set");
 
     /* Channel only. */
@@ -47,6 +49,7 @@ int main(void) {
     memset(&s, 0, sizeof(s));
     config_load(&s);
     CHECK(!config_has_whatsapp_group(&s), "group: false when only channel JID is set");
+    CHECK(config_has_whatsapp_channel(&s), "channel: true when WHATSAPP_CHANNEL_JID set");
 
     /* Both. */
     setenv("WHATSAPP_GROUP_JID", "120363012345678901@g.us", 1);

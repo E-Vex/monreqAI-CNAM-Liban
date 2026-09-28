@@ -67,6 +67,7 @@ isae_error_t config_load(settings_t* settings);
 bool config_has_ai(const settings_t* settings);
 bool config_has_telegram(const settings_t* settings);
 bool config_has_whatsapp(const settings_t* settings);
+bool config_has_whatsapp_channel(const settings_t* settings);
 bool config_has_whatsapp_group(const settings_t* settings);
 
 /* Return the department channel for a category, or NULL if not configured.
