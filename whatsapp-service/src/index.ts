@@ -3,6 +3,7 @@ import express from 'express'
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
+  jidNormalizedUser,
   useMultiFileAuthState
 } from 'baileys'
 import { Boom } from '@hapi/boom'
@@ -96,8 +97,19 @@ async function connect(): Promise<void> {
             log('WARN', `group ${GROUP_JID}: no metadata returned (account may not be a participant)`)
             return
           }
-          const me = s.user?.id ?? ''
-          const participant = (meta.participants ?? []).some((p) => p.id === me)
+          // s.user.id carries a device suffix ("123:5@s.whatsapp.net") and
+          // participants may be listed in LID or phone-number form, so
+          // normalize and compare across every identifier we have.
+          const mine = new Set(
+            [s.user?.id, s.user?.lid, s.user?.phoneNumber]
+              .filter((x): x is string => !!x)
+              .map((x) => jidNormalizedUser(x))
+          )
+          const participant = (meta.participants ?? []).some((p) =>
+            [p.id, p.lid, p.phoneNumber]
+              .filter((x): x is string => !!x)
+              .some((x) => mine.has(jidNormalizedUser(x)))
+          )
           const announce = meta.announce === true
           log('INFO', `group ${GROUP_JID}: subject="${meta.subject ?? ''}", participant=${participant ? 'yes' : 'NO'}, announce=${announce ? 'yes (admins-only)' : 'no'}`)
           if (!participant) {
